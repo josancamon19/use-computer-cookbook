@@ -1,1 +1,0 @@
-I need to manually calibrate the colors of the monitor. Now I need to input an RGB value manually and then check its color. I remember that there is a built-in system color calculator that can perform this function. Please help me find it and open the corresponding interface. 
