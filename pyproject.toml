@@ -16,13 +16,8 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
-[[tool.uv.index]]
-name = "fury"
-url = "https://repo.fury.io/josancamon19/"
-explicit = true
-
 [tool.uv.sources]
-mmini = { path = "../sdk", editable = true }
+mmini = { git = "https://github.com/josancamon19/mmini-sdk.git", branch = "main" }
 harbor = { path = "../harbor", editable = true }
 
 [build-system]
