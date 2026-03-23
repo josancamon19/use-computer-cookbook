@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from runner.agents.cua.base_cua import (
+from runner.agents.base_cua import (
     BaseCUAAgent,
     build_system_prompt,
     execute_action,

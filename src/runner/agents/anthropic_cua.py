@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from runner.agents.cua.base_cua import (
+from runner.agents.base_cua import (
     BaseCUAAgent,
     build_system_prompt,
     execute_action,
