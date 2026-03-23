@@ -12,11 +12,11 @@ environment:
   delete: true
 
 agents:
-  # - import_path: "runner.agents.cua.anthropic_cua:AnthropicCUAAgent"
+  # - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
   #   model_name: "anthropic/claude-sonnet-4-6"
-  # - import_path: "runner.agents.cua.openai_cua:OpenAICUAAgent"
+  # - import_path: "runner.agents.openai_cua:OpenAICUAAgent"
   #   model_name: "openai/computer-use-preview"
-  - import_path: "runner.agents.cua.generic_cua:GenericCUAAgent"
+  - import_path: "runner.agents.generic_cua:GenericCUAAgent"
     model_name: "openai/gpt-5.4"
 
 datasets:
