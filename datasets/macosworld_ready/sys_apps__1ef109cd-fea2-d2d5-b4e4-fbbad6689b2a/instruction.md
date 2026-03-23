@@ -1,0 +1,1 @@
+Launch the app "Chess".  

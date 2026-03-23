@@ -1,0 +1,25 @@
+jobs_dir: jobs
+n_attempts: 1
+
+orchestrator:
+  type: local
+  n_concurrent_trials: 2
+
+environment:
+  import_path: "runner.environments.mmini:MminiEnvironment"
+  kwargs:
+    gateway_url: "http://localhost:8080"
+  delete: true
+
+agents:
+  # - import_path: "runner.agents.cua.anthropic_cua:AnthropicCUAAgent"
+  #   model_name: "anthropic/claude-sonnet-4-6"
+  # - import_path: "runner.agents.cua.openai_cua:OpenAICUAAgent"
+  #   model_name: "openai/computer-use-preview"
+  - import_path: "runner.agents.cua.generic_cua:GenericCUAAgent"
+    model_name: "openai/gpt-5.4"
+
+datasets:
+  - path: datasets/macosworld_ready
+    task_names:
+      - "sys_apps__12fea1c8*"
