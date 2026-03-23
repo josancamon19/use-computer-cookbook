@@ -20,7 +20,7 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from mmini.aio import AsyncSandbox
+from mmini.sandbox import AsyncSandbox
 
 
 class MminiEnvironment(BaseEnvironment):
