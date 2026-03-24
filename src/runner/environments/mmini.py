@@ -11,11 +11,11 @@ Usage in job config:
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 from pathlib import Path
 
 import httpx
-
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
@@ -35,6 +35,7 @@ class MminiEnvironment(BaseEnvironment):
         task_env_config: EnvironmentConfig,
         logger: logging.Logger | None = None,
         gateway_url: str = "http://localhost:8080",
+        api_key: str = "",
         ssh_user: str = "lume",
         **kwargs,
     ):
@@ -42,7 +43,11 @@ class MminiEnvironment(BaseEnvironment):
         self._ssh_user = ssh_user
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
-        self._http = httpx.AsyncClient(base_url=gateway_url, timeout=300)
+        headers = {}
+        api_key = api_key or os.environ.get("MMINI_API_KEY", "")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self._http = httpx.AsyncClient(base_url=gateway_url, headers=headers, timeout=300)
         self._sandbox: AsyncSandbox | None = None
 
         super().__init__(

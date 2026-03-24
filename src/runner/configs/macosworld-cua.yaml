@@ -1,21 +1,23 @@
 jobs_dir: jobs
-n_attempts: 1
+n_attempts: 3
 
 orchestrator:
-  type: local
-  n_concurrent_trials: 1
+    type: local
+    n_concurrent_trials: 3
 
 environment:
-  import_path: "runner.environments.mmini:MminiEnvironment"
-  kwargs:
-    gateway_url: "http://localhost:8081"
-  delete: true
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8081"
+    delete: true
 
 agents:
-  - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
-    model_name: "anthropic/claude-sonnet-4-6"
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 20
 
 datasets:
-  - path: datasets/macosworld_ready
-    task_names:
-      - "sys_apps__12fea1c8*"
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"

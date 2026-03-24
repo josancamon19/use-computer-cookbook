@@ -87,6 +87,9 @@ class AnthropicCUAAgent(BaseCUAAgent):
         total_out = 0
 
         for step_idx in range(self.max_steps):
+            # Keep only last 5 screenshots to avoid RequestTooLargeError
+            _truncate_old_screenshots(messages, keep=5)
+
             response = client.beta.messages.create(
                 model=model,
                 max_tokens=4096,
@@ -203,6 +206,35 @@ class AnthropicCUAAgent(BaseCUAAgent):
         )
         context.n_input_tokens = total_in
         context.n_output_tokens = total_out
+
+
+def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> None:
+    """Remove base64 images from older messages, keeping only the last `keep`."""
+    image_indices: list[tuple[int, int]] = []  # (msg_idx, content_idx)
+    for i, msg in enumerate(messages):
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for j, item in enumerate(content):
+            if isinstance(item, dict) and item.get("type") == "image":
+                image_indices.append((i, j))
+            elif isinstance(item, dict) and item.get("type") == "tool_result":
+                for k, sub in enumerate(item.get("content", []) if isinstance(item.get("content"), list) else []):
+                    if isinstance(sub, dict) and sub.get("type") == "image":
+                        image_indices.append((i, (j, k)))
+
+    to_remove = len(image_indices) - keep
+    if to_remove <= 0:
+        return
+
+    for idx in image_indices[:to_remove]:
+        if isinstance(idx[1], tuple):
+            j, k = idx[1]
+            content_list = messages[idx[0]]["content"][j].get("content", [])
+            if isinstance(content_list, list) and k < len(content_list):
+                content_list[k] = {"type": "text", "text": "[screenshot removed]"}
+        else:
+            messages[idx[0]]["content"][idx[1]] = {"type": "text", "text": "[screenshot removed]"}
 
 
 def _text(content: Any) -> str:
