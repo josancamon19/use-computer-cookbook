@@ -5,17 +5,16 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+import openai
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
+
 from runner.agents.base_cua import (
     BaseCUAAgent,
     build_system_prompt,
     execute_action,
-    get_sandbox,
     load_prompt,
-    run_task_setup,
-    write_trajectory,
 )
-from harbor.environments.base import BaseEnvironment
-from harbor.models.agent.context import AgentContext
 
 
 class OpenAICUAAgent(BaseCUAAgent):
@@ -29,16 +28,10 @@ class OpenAICUAAgent(BaseCUAAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        from openai import OpenAI
+        sandbox = await self.pre_run(environment)
+        self.steps[0]["message"] = instruction
 
-        sandbox = get_sandbox(environment)
-        await self.start_recording(sandbox)
-        await run_task_setup(environment, self.task_dir, self.logger)
-
-        images_dir = self.logs_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-
-        client = OpenAI()
+        client = openai.OpenAI()
         model = self._parsed_model_name or "computer-use-preview"
 
         system = build_system_prompt(
@@ -49,7 +42,7 @@ class OpenAICUAAgent(BaseCUAAgent):
 
         # Initial screenshot
         ss = await sandbox.screenshot.take_full_screen()
-        (images_dir / "step_000.png").write_bytes(ss)
+        (self.images_dir / "step_000.png").write_bytes(ss)
 
         tools = [
             {
@@ -67,19 +60,10 @@ class OpenAICUAAgent(BaseCUAAgent):
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/png;base64,{ss_b64}",
-                    }
+                    {"type": "input_image", "image_url": f"data:image/png;base64,{ss_b64}"}
                 ],
             },
         ]
-
-        steps: list[dict[str, Any]] = [
-            {"step_id": 1, "source": "user", "message": instruction}
-        ]
-        total_in = 0
-        total_out = 0
 
         for step_idx in range(self.max_steps):
             response = client.responses.create(
@@ -89,12 +73,11 @@ class OpenAICUAAgent(BaseCUAAgent):
                 truncation="auto",
             )
 
-            total_in += response.usage.input_tokens if response.usage else 0
-            total_out += response.usage.output_tokens if response.usage else 0
+            self.total_in += response.usage.input_tokens if response.usage else 0
+            self.total_out += response.usage.output_tokens if response.usage else 0
 
             computer_calls = [
-                item
-                for item in response.output
+                item for item in response.output
                 if getattr(item, "type", None) == "computer_call"
             ]
 
@@ -104,9 +87,9 @@ class OpenAICUAAgent(BaseCUAAgent):
                     for item in response.output
                     if getattr(item, "type", None) == "message"
                 ]
-                steps.append(
+                self.steps.append(
                     {
-                        "step_id": len(steps) + 1,
+                        "step_id": len(self.steps) + 1,
                         "source": "agent",
                         "message": "\n".join(text_parts) or "Task complete.",
                     }
@@ -118,14 +101,11 @@ class OpenAICUAAgent(BaseCUAAgent):
                 mapped = _map_openai_action(action)
 
                 result_text, ss_bytes, ss_path = await execute_action(
-                    sandbox,
-                    mapped,
-                    images_dir,
-                    step_idx + 1,
+                    sandbox, mapped, self.images_dir, step_idx + 1,
                 )
 
                 step_data: dict[str, Any] = {
-                    "step_id": len(steps) + 1,
+                    "step_id": len(self.steps) + 1,
                     "source": "agent",
                     "tool_calls": [
                         {
@@ -141,18 +121,12 @@ class OpenAICUAAgent(BaseCUAAgent):
                             {
                                 "content": [
                                     {"type": "text", "text": result_text},
-                                    {
-                                        "type": "image",
-                                        "source": {
-                                            "media_type": "image/png",
-                                            "path": ss_path,
-                                        },
-                                    },
+                                    {"type": "image", "source": {"media_type": "image/png", "path": ss_path}},
                                 ],
                             }
                         ],
                     }
-                steps.append(step_data)
+                self.steps.append(step_data)
 
                 if ss_bytes:
                     b64 = base64.b64encode(ss_bytes).decode()
@@ -167,17 +141,7 @@ class OpenAICUAAgent(BaseCUAAgent):
                         }
                     ]
 
-        await self.stop_recording(sandbox)
-        write_trajectory(
-            self.logs_dir,
-            steps,
-            total_in,
-            total_out,
-            model,
-            "openai-cua",
-        )
-        context.n_input_tokens = total_in
-        context.n_output_tokens = total_out
+        await self.post_run(context, model, "openai-cua")
 
 
 def _map_openai_action(action: Any) -> dict[str, Any]:

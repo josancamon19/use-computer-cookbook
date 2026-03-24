@@ -5,17 +5,16 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+import anthropic
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
+
 from runner.agents.base_cua import (
     BaseCUAAgent,
     build_system_prompt,
     execute_action,
-    get_sandbox,
     load_prompt,
-    run_task_setup,
-    write_trajectory,
 )
-from harbor.environments.base import BaseEnvironment
-from harbor.models.agent.context import AgentContext
 
 
 class AnthropicCUAAgent(BaseCUAAgent):
@@ -29,16 +28,10 @@ class AnthropicCUAAgent(BaseCUAAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        from anthropic import Anthropic
+        sandbox = await self.pre_run(environment)
+        self.steps[0]["message"] = instruction
 
-        sandbox = get_sandbox(environment)
-        await self.start_recording(sandbox)
-        await run_task_setup(environment, self.task_dir, self.logger)
-
-        images_dir = self.logs_dir / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-
-        client = Anthropic()
+        client = anthropic.Anthropic()
         model = self._parsed_model_name or "claude-sonnet-4-6"
 
         uses_new = any(t in model for t in ("opus-4-6", "sonnet-4-6"))
@@ -61,7 +54,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
 
         # Initial screenshot
         ss = await sandbox.screenshot.take_full_screen()
-        (images_dir / "step_000.png").write_bytes(ss)
+        (self.images_dir / "step_000.png").write_bytes(ss)
 
         messages: list[dict[str, Any]] = [
             {
@@ -80,14 +73,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
             }
         ]
 
-        steps: list[dict[str, Any]] = [
-            {"step_id": 1, "source": "user", "message": instruction}
-        ]
-        total_in = 0
-        total_out = 0
-
         for step_idx in range(self.max_steps):
-            # Keep only last 5 screenshots to avoid RequestTooLargeError
             _truncate_old_screenshots(messages, keep=5)
 
             response = client.beta.messages.create(
@@ -99,15 +85,15 @@ class AnthropicCUAAgent(BaseCUAAgent):
                 betas=[beta],
             )
 
-            total_in += response.usage.input_tokens
-            total_out += response.usage.output_tokens
+            self.total_in += response.usage.input_tokens
+            self.total_out += response.usage.output_tokens
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "end_turn":
                 if not any(b.type == "tool_use" for b in response.content):
-                    steps.append(
+                    self.steps.append(
                         {
-                            "step_id": len(steps) + 1,
+                            "step_id": len(self.steps) + 1,
                             "source": "agent",
                             "message": _text(response.content),
                         }
@@ -132,13 +118,9 @@ class AnthropicCUAAgent(BaseCUAAgent):
                 )
 
                 result_text, ss_bytes, ss_path = await execute_action(
-                    sandbox,
-                    action,
-                    images_dir,
-                    step_idx + 1,
+                    sandbox, action, self.images_dir, step_idx + 1,
                 )
 
-                # Tool result for the LLM conversation
                 content: list[dict[str, Any]] = [{"type": "text", "text": result_text}]
                 if ss_bytes:
                     content.append(
@@ -153,28 +135,14 @@ class AnthropicCUAAgent(BaseCUAAgent):
                     )
 
                 tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": content,
-                    }
+                    {"type": "tool_result", "tool_use_id": block.id, "content": content}
                 )
 
-                # Observation for the trajectory (with image path)
-                obs: dict[str, Any] = {
-                    "source_call_id": block.id,
-                    "content": result_text,
-                }
+                obs: dict[str, Any] = {"source_call_id": block.id, "content": result_text}
                 if ss_path:
                     obs["content"] = [
                         {"type": "text", "text": result_text},
-                        {
-                            "type": "image",
-                            "source": {
-                                "media_type": "image/png",
-                                "path": ss_path,
-                            },
-                        },
+                        {"type": "image", "source": {"media_type": "image/png", "path": ss_path}},
                     ]
                 obs_results.append(obs)
 
@@ -182,7 +150,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
                 messages.append({"role": "user", "content": tool_results})
 
             step_data: dict[str, Any] = {
-                "step_id": len(steps) + 1,
+                "step_id": len(self.steps) + 1,
                 "source": "agent",
                 "message": _text(response.content) or None,
                 "tool_calls": tool_calls,
@@ -193,24 +161,14 @@ class AnthropicCUAAgent(BaseCUAAgent):
             }
             if obs_results:
                 step_data["observation"] = {"results": obs_results}
-            steps.append(step_data)
+            self.steps.append(step_data)
 
-        await self.stop_recording(sandbox)
-        write_trajectory(
-            self.logs_dir,
-            steps,
-            total_in,
-            total_out,
-            model,
-            "anthropic-cua",
-        )
-        context.n_input_tokens = total_in
-        context.n_output_tokens = total_out
+        await self.post_run(context, model, "anthropic-cua")
 
 
 def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> None:
     """Remove base64 images from older messages, keeping only the last `keep`."""
-    image_indices: list[tuple[int, int]] = []  # (msg_idx, content_idx)
+    image_indices: list[tuple[int, int]] = []
     for i, msg in enumerate(messages):
         content = msg.get("content")
         if not isinstance(content, list):
@@ -219,7 +177,9 @@ def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> 
             if isinstance(item, dict) and item.get("type") == "image":
                 image_indices.append((i, j))
             elif isinstance(item, dict) and item.get("type") == "tool_result":
-                for k, sub in enumerate(item.get("content", []) if isinstance(item.get("content"), list) else []):
+                for k, sub in enumerate(
+                    item.get("content", []) if isinstance(item.get("content"), list) else []
+                ):
                     if isinstance(sub, dict) and sub.get("type") == "image":
                         image_indices.append((i, (j, k)))
 

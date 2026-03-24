@@ -11,27 +11,9 @@ from typing import Any
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from mmini.sandbox import AsyncSandbox
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-# Dismiss crash dialogs, eject extra drives (from macOSWorld)
-ENV_INIT_COMMAND = (
-    'find /Library/Logs/DiagnosticReports -type f -name "panic*.panic"'
-    " -mmin -20 2>/dev/null | grep -q . && osascript -e "
-    "'tell application \"System Events\" to click at {456,349}' && "
-    "rm -rf /Library/Logs/DiagnosticReports/*.panic; "
-    "diskutil list | grep Creedence | awk '{print $NF}' | "
-    "xargs -I {} diskutil eject {} 2>/dev/null; true"
-)
-
-
-def get_sandbox(environment: BaseEnvironment) -> Any:
-    """Extract sandbox from environment. Works with any environment
-    that exposes a .sandbox property (e.g. MminiEnvironment)."""
-    sandbox = getattr(environment, "sandbox", None)
-    if sandbox is None:
-        raise RuntimeError("CUA agents require an environment with a .sandbox property")
-    return sandbox
 
 
 def load_prompt(name: str) -> str:
@@ -70,7 +52,7 @@ def build_system_prompt(
 
 
 async def execute_action(
-    sandbox: Any,
+    sandbox: AsyncSandbox,
     action: dict[str, Any],
     images_dir: Path,
     step_idx: int,
@@ -140,11 +122,7 @@ async def execute_action(
 
 
 def _resolve_task_dir(logs_dir: Path) -> Path | None:
-    """Discover task_dir from the trial's config.json.
-
-    Harbor writes config.json to the trial directory (parent of agent/).
-    It contains task.path — the local task directory.
-    """
+    """Discover task_dir from the trial's config.json."""
     trial_dir = logs_dir.parent
     config_path = trial_dir / "config.json"
     if not config_path.exists():
@@ -159,40 +137,6 @@ def _resolve_task_dir(logs_dir: Path) -> Path | None:
     except Exception:
         pass
     return None
-
-
-async def run_task_setup(
-    environment: BaseEnvironment,
-    task_dir: Path | None,
-    logger: Any,
-) -> None:
-    """Run env_init + pre_command from task_config.json."""
-    # Always run env_init (dismiss crash dialogs, etc.)
-    await environment.exec(ENV_INIT_COMMAND, timeout_sec=15)
-
-    if not task_dir:
-        return
-
-    config_path = task_dir / "tests" / "task_config.json"
-    if not config_path.exists():
-        return
-
-    data = json.loads(config_path.read_text())
-    pre_command = data.get("pre_command", "")
-    if isinstance(pre_command, dict):
-        pre_command = pre_command.get("en", "")
-
-    if pre_command:
-        logger.info("Running pre_command...")
-        for attempt in range(3):
-            result = await environment.exec(pre_command, timeout_sec=60)
-            if result.return_code == 0:
-                break
-            logger.warning(f"pre_command attempt {attempt + 1} failed")
-
-    delay = data.get("before_action_delay_seconds", 10)
-    if delay:
-        await asyncio.sleep(delay)
 
 
 def write_trajectory(
@@ -240,10 +184,13 @@ class BaseCUAAgent(BaseAgent):
         self.max_steps = max_steps
         self.screen_width = screen_width
         self.screen_height = screen_height
-        # task_dir passed by Harbor fork, or auto-resolved from trial config.json
         self.task_dir = Path(task_dir) if task_dir else _resolve_task_dir(logs_dir)
         self._recording_id: str | None = None
-        self._sandbox: Any = None
+        self.sandbox: AsyncSandbox | None = None
+        self.images_dir: Path = logs_dir / "images"
+        self.steps: list[dict[str, Any]] = []
+        self.total_in = 0
+        self.total_out = 0
 
     def version(self) -> str | None:
         return "1.0.0"
@@ -251,8 +198,34 @@ class BaseCUAAgent(BaseAgent):
     async def setup(self, environment: BaseEnvironment) -> None:
         pass
 
-    async def start_recording(self, sandbox: Any) -> None:
-        """Start screen recording. Call at the beginning of run()."""
+    async def pre_run(self, environment: BaseEnvironment) -> AsyncSandbox:
+        """Common setup: get sandbox, start recording, run task setup, create images dir.
+
+        Returns the sandbox for convenience.
+        """
+        sandbox: AsyncSandbox | None = getattr(environment, "sandbox", None)
+        if sandbox is None:
+            raise RuntimeError("CUA agents require an environment with a .sandbox property")
+        self.sandbox = sandbox
+        await self.start_recording(sandbox)
+        await environment.setup_task(self.task_dir)  # type: ignore[attr-defined]
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+        self.steps = [{"step_id": 1, "source": "user", "message": ""}]
+        self.total_in = 0
+        self.total_out = 0
+        return sandbox
+
+    async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
+        """Common teardown: stop recording, write trajectory, set token counts."""
+        assert self.sandbox is not None
+        await self.stop_recording(self.sandbox)
+        write_trajectory(
+            self.logs_dir, self.steps, self.total_in, self.total_out, model, agent_name
+        )
+        context.n_input_tokens = self.total_in
+        context.n_output_tokens = self.total_out
+
+    async def start_recording(self, sandbox: AsyncSandbox) -> None:
         try:
             result = await sandbox.recording.start(name="trial")
             self._recording_id = result.get("id") or result.get("recording_id")
@@ -260,8 +233,7 @@ class BaseCUAAgent(BaseAgent):
         except Exception as e:
             self.logger.warning(f"Failed to start recording: {e}")
 
-    async def stop_recording(self, sandbox: Any) -> None:
-        """Stop recording and download. Call at the end of run()."""
+    async def stop_recording(self, sandbox: AsyncSandbox) -> None:
         if not self._recording_id:
             return
         try:
