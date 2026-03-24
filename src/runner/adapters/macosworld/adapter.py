@@ -19,12 +19,12 @@ class MacOSWorldTask:
     task_id: str
     category: str
     instruction: str
-    snapshot: dict = field(default_factory=dict)
     pre_command: str | dict = ""
     grading_command: list = field(default_factory=list)
     before_action_delay_seconds: int = 10
     before_grading_delay_seconds: int = 30
-    force_snapshot_recovery: bool = False
+    # Parsed but unused by us — kept for filtering
+    snapshot: dict = field(default_factory=dict)
     in_process: list | None = None
 
     @classmethod
@@ -34,12 +34,11 @@ class MacOSWorldTask:
             task_id=data["id"],
             category=category,
             instruction=data.get("task", {}).get("en", ""),
-            snapshot=data.get("snapshot", {}),
             pre_command=data.get("pre_command", ""),
             grading_command=data.get("grading_command", []),
             before_action_delay_seconds=data.get("before_action_delay_seconds", 10),
             before_grading_delay_seconds=data.get("before_grading_delay_seconds", 30),
-            force_snapshot_recovery=data.get("force_snapshot_recovery", False),
+            snapshot=data.get("snapshot", {}),
             in_process=data.get("in_process"),
         )
 
@@ -104,6 +103,50 @@ class MacOSWorldLoader:
 
     def total_tasks(self, base_only: bool = False) -> int:
         return len(self.all_task_ids(base_only=base_only))
+
+
+def _build_test_sh(grading_cmds: list, before_grading_delay: int = 0) -> str:
+    """Generate test.sh with grading commands inlined."""
+    lines = [
+        "#!/bin/bash",
+        "# Auto-generated grading script",
+        "set -e",
+        "",
+        '# Detect path prefix (macOS SIP blocks /tests, so mmini uses /tmp/harbor)',
+        'PREFIX=""',
+        '[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"',
+        'REWARD="${PREFIX}/logs/verifier/reward.txt"',
+        "",
+    ]
+
+    if before_grading_delay > 0:
+        lines.append("# Wait for system to settle before grading")
+        lines.append(f"sleep {before_grading_delay}")
+        lines.append("")
+
+    if not grading_cmds:
+        lines.append('echo "0" > "$REWARD"')
+        lines.append('echo "Score: 0"')
+    else:
+        # Only check commands with score 100 (full pass)
+        checks = [cmd for cmd, score in grading_cmds if score == 100]
+        if checks:
+            for i, cmd in enumerate(checks):
+                escaped = cmd.replace("'", "'\\''")
+                lines.append(f"# Check {i + 1}")
+                lines.append(f"if bash -c '{escaped}' 2>/dev/null | grep -qi 'true'; then")
+                lines.append('  echo "1" > "$REWARD"')
+                lines.append('  echo "Score: 1"')
+                lines.append("  exit 0")
+                lines.append("fi")
+                lines.append("")
+            lines.append('echo "0" > "$REWARD"')
+            lines.append('echo "Score: 0"')
+        else:
+            lines.append('echo "0" > "$REWARD"')
+            lines.append('echo "Score: 0"')
+
+    return "\n".join(lines) + "\n"
 
 
 def _read_template(template_dir: Path, name: str) -> str:
@@ -171,18 +214,56 @@ class MacOSWorldToHarbor:
         )
         (task_dir / "task.toml").write_text(cfg, encoding="utf-8")
 
-        # tests/task_config.json — task JSON with paths rewritten for lume VMs
-        src_json = self.loader.task_json_path(category, task_id)
-        task_json = src_json.read_text(encoding="utf-8")
-        task_json = task_json.replace("/Users/ec2-user", "/Users/lume")
-        task_json = task_json.replace("ec2-user", "lume")
-        (tests_dir / "task_config.json").write_text(task_json, encoding="utf-8")
+        # tests/setup/ — pre-agent environment setup
+        setup_dir = tests_dir / "setup"
+        setup_dir.mkdir()
 
-        # tests/test.sh
-        test_tpl = _read_template(self.template_dir, "test.sh")
-        test = _render(test_tpl, task_id=task.task_id, category=task.category)
+        pre_command = task.pre_command
+        if isinstance(pre_command, dict):
+            pre_command = pre_command.get("en", "")
+
+        # Always create pre_command.sh with env init; append task-specific command if present
+        env_init = (
+            "# Dismiss crash dialogs, eject leftover drives\n"
+            'find /Library/Logs/DiagnosticReports -type f -name "panic*.panic"'
+            " -mmin -20 2>/dev/null | grep -q . && osascript -e "
+            "'tell application \"System Events\" to click at {456,349}' && "
+            "rm -rf /Library/Logs/DiagnosticReports/*.panic\n"
+            "diskutil list | grep Creedence | awk '{print $NF}' | "
+            "xargs -I {} diskutil eject {} 2>/dev/null\n"
+            "true\n"
+        )
+        task_cmd = ""
+        if pre_command:
+            task_cmd = pre_command.replace("/Users/ec2-user", "/Users/lume")
+            task_cmd = task_cmd.replace("ec2-user", "lume")
+
+        pre_cmd_path = setup_dir / "pre_command.sh"
+        pre_cmd_path.write_text(
+            f"#!/bin/bash\n{env_init}\n{task_cmd}\n" if task_cmd else f"#!/bin/bash\n{env_init}",
+            encoding="utf-8",
+        )
+        pre_cmd_path.chmod(0o755)
+
+        setup_config = {
+            "task_id": task.task_id,
+            "before_action_delay_seconds": task.before_action_delay_seconds,
+            "before_grading_delay_seconds": task.before_grading_delay_seconds,
+        }
+        (setup_dir / "config.json").write_text(
+            json.dumps(setup_config, indent=2) + "\n", encoding="utf-8"
+        )
+
+        # tests/test.sh — grading commands inlined
+        grading_cmds = task.grading_command or []
+        # Rewrite paths for lume VMs
+        grading_cmds = [
+            [cmd.replace("/Users/ec2-user", "/Users/lume").replace("ec2-user", "lume"), score]
+            for cmd, score in grading_cmds
+        ]
+        test_sh = _build_test_sh(grading_cmds, task.before_grading_delay_seconds)
         test_path = tests_dir / "test.sh"
-        test_path.write_text(test, encoding="utf-8")
+        test_path.write_text(test_sh, encoding="utf-8")
         test_path.chmod(0o755)
 
         return task_dir
