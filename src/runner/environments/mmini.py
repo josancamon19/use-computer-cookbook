@@ -10,6 +10,8 @@ Usage in job config:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import shlex
@@ -116,6 +118,37 @@ class MminiEnvironment(BaseEnvironment):
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace"
         )
+
+    async def setup_task(self, task_dir: Path | None) -> None:
+        """Run pre-agent task setup from tests/setup/ if present."""
+        if not task_dir:
+            return
+
+        setup_dir = task_dir / "tests" / "setup"
+
+        # Run pre_command.sh if it exists
+        pre_cmd_path = setup_dir / "pre_command.sh"
+        if pre_cmd_path.exists():
+            cmd = pre_cmd_path.read_text().strip()
+            # Strip shebang
+            lines = [line for line in cmd.split("\n") if not line.startswith("#!")]
+            cmd = "\n".join(lines).strip()
+            if cmd:
+                self.logger.info("Running pre_command...")
+                for attempt in range(3):
+                    result = await self.exec(cmd, timeout_sec=60)
+                    if result.return_code == 0:
+                        break
+                    self.logger.warning(f"pre_command attempt {attempt + 1} failed")
+
+        # Wait for system to settle
+        config_path = setup_dir / "config.json"
+        delay = 10
+        if config_path.exists():
+            data = json.loads(config_path.read_text())
+            delay = data.get("before_action_delay_seconds", 10)
+        if delay:
+            await asyncio.sleep(delay)
 
     async def stop(self, delete: bool = True) -> None:
         if self._sandbox_id is None:
