@@ -1,1 +1,0 @@
-There is a 2x2 table in one of my notes titled "Lorem Ipsum". In that table, please help me fill in `Lorem` in the top-left cell, `Ipsum` in the top-right cell, `Dolor` in the bottom-left cell, and `Sit` in the bottom-right cell. 

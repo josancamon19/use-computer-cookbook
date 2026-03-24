@@ -1,1 +1,0 @@
-Someone else would be temporarily using my Mac. Help me create an account without a password. This account should be prohibited from changing my system settings, and that all changes made by this account (like files placed on the desktop) will not be saved upon logout. 
