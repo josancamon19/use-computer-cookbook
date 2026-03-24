@@ -1,0 +1,16 @@
+[metadata]
+author_name = "macOSWorld Team"
+difficulty = "hard"
+category = "desktop-automation"
+tags = ["macosworld", "multimodal", "gui", "macos", "{category}"]
+
+[verifier]
+timeout_sec = {max_timeout}
+
+[agent]
+timeout_sec = {max_timeout}
+
+[environment]
+cpus = 4
+memory_mb = 8192
+allow_internet = true
