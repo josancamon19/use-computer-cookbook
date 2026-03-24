@@ -1,0 +1,1 @@
+Help me use the Calculator to calculate the result of the following question: Car A and B travel in the same direction. Car A travels at a speed of 60 km/h. Car B travels at a speed of 80 km/h, but is 20 km behind Car A. How many hours will it take for Car B to catch up with Car A? 
