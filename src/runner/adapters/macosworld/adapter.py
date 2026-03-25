@@ -3,15 +3,28 @@ Convert macOSWorld benchmark tasks into Harbor task directories.
 
 Reads task JSON files from the macOSWorld repo's tasks/ directory
 and produces one Harbor task directory per task.
+
+When a task references Benchmark_Backup files, the needed files are
+copied into the task's tests/setup/files/ directory and the pre_command
+is rewritten to use a VM-local staging path (/tmp/harbor/task_files/).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
+
+# Benchmark_Backup items that a task can reference (keyword → actual filename)
+_BACKUP_ITEMS = {
+    "benchmark_files": "benchmark_files",
+    "BenchmarkApp": "BenchmarkApp",
+    "com.apple.dock.plist": "com.apple.dock.plist",
+    "iMovie": "iMovie Library.imovielibrary",
+}
 
 
 @dataclass
@@ -87,8 +100,6 @@ class MacOSWorldLoader:
                 task = MacOSWorldTask.from_json(json_file, cat_dir.name)
                 if (base_only or ready_only) and task.needs_apps:
                     continue
-                if ready_only and task.needs_benchmark_backup:
-                    continue
                 pairs.append((cat_dir.name, json_file.stem))
         return pairs
 
@@ -160,6 +171,22 @@ def _render(template: str, **kwargs) -> str:
     return result
 
 
+def _embed_backup_files(cmd: str, files_dir: Path, dest_dir: Path) -> None:
+    """Copy the Benchmark_Backup files this command needs into dest_dir."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for key, filename in _BACKUP_ITEMS.items():
+        if key not in cmd:
+            continue
+        src = files_dir / filename
+        dst = dest_dir / filename
+        if not src.exists():
+            continue
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+
+
 class MacOSWorldToHarbor:
     def __init__(
         self,
@@ -167,12 +194,14 @@ class MacOSWorldToHarbor:
         harbor_tasks_root: Path,
         max_timeout_sec: float = 1800.0,
         template_dir: Optional[Path] = None,
+        files_dir: Optional[Path] = None,
     ) -> None:
         self.loader = MacOSWorldLoader(macosworld_root)
         self.out_root = Path(harbor_tasks_root)
         self.out_root.mkdir(parents=True, exist_ok=True)
         self.template_dir = Path(template_dir or (Path(__file__).parent / "template"))
         self.max_timeout = float(max_timeout_sec)
+        self.files_dir = Path(files_dir) if files_dir else None
 
     def get_all_ids(
         self, base_only: bool = False, ready_only: bool = False
@@ -237,6 +266,8 @@ class MacOSWorldToHarbor:
         if pre_command:
             task_cmd = pre_command.replace("/Users/ec2-user", "/Users/lume")
             task_cmd = task_cmd.replace("ec2-user", "lume")
+            if self.files_dir and "Benchmark_Backup" in pre_command:
+                _embed_backup_files(pre_command, self.files_dir, setup_dir / "files")
 
         pre_cmd_path = setup_dir / "pre_command.sh"
         pre_cmd_path.write_text(

@@ -150,9 +150,16 @@ class MminiEnvironment(BaseEnvironment):
         """Run pre-agent task setup from tests/setup/ if present."""
         setup_dir = self._task_dir / "tests" / "setup"
 
+        # Upload task-specific files to VM if present
+        files_dir = setup_dir / "files"
+        if files_dir.is_dir() and any(files_dir.iterdir()):
+            self.logger.info("Uploading task files to VM...")
+            await self.upload_dir(files_dir, "/Users/lume/Benchmark_Backup")
+
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
             cmd = pre_cmd_path.read_text().strip()
+
             lines = [line for line in cmd.split("\n") if not line.startswith("#!")]
             cmd = "\n".join(lines).strip()
             if cmd:
