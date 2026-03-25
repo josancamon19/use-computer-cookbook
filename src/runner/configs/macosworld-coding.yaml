@@ -1,23 +1,25 @@
 jobs_dir: jobs
-n_attempts: 4
+n_attempts: 1
 
 orchestrator:
     type: local
-    n_concurrent_trials: 4
+    n_concurrent_trials: 1
 
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
-        gateway_url: "http://10.10.10.2:8081"
-    delete: true
+        gateway_url: "http://localhost:8080"
 
 agents:
-    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+    - name: "claude-code"
       model_name: "anthropic/claude-sonnet-4-6"
       kwargs:
-          max_steps: 5
+          max_turns: 20
+
+    - name: "codex"
+      model_name: "openai/o3"
+      kwargs:
+          max_turns: 20
 
 datasets:
     - path: datasets/macosworld_ready
-      task_names:
-          - "sys_apps__12fea1c8*"

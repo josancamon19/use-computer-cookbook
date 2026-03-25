@@ -208,7 +208,6 @@ class BaseCUAAgent(BaseAgent):
             raise RuntimeError("CUA agents require an environment with a .sandbox property")
         self.sandbox = sandbox
         await self.start_recording(sandbox)
-        await environment.setup_task(self.task_dir)  # type: ignore[attr-defined]
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.steps = [{"step_id": 1, "source": "user", "message": ""}]
         self.total_in = 0

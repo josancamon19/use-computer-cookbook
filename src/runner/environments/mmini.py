@@ -45,11 +45,14 @@ class MminiEnvironment(BaseEnvironment):
         self._ssh_user = ssh_user
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
+        self._task_dir: Path = environment_dir.parent
         headers = {}
         api_key = api_key or os.environ.get("MMINI_API_KEY", "")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        self._http = httpx.AsyncClient(base_url=gateway_url, headers=headers, timeout=300)
+        self._http = httpx.AsyncClient(
+            base_url=gateway_url, headers=headers, timeout=300,
+        )
         self._sandbox: AsyncSandbox | None = None
 
         super().__init__(
@@ -80,7 +83,6 @@ class MminiEnvironment(BaseEnvironment):
 
     @property
     def sandbox(self) -> AsyncSandbox:
-        """The async mmini sandbox — mouse, keyboard, screenshot, recording, display."""
         if self._sandbox is None:
             raise RuntimeError("sandbox not available — call start() first")
         return self._sandbox
@@ -92,7 +94,6 @@ class MminiEnvironment(BaseEnvironment):
     def _validate_definition(self) -> None:
         cfg = self.task_env_config
 
-        # Warn about resource settings we can't enforce (VMs are pre-sized)
         if cfg.cpus > 1 and cfg.cpus != 4:
             self.logger.warning(
                 f"task requests {cfg.cpus} CPUs — mmini VMs are fixed at 4 cores"
@@ -104,13 +105,6 @@ class MminiEnvironment(BaseEnvironment):
         if cfg.storage_mb and cfg.storage_mb > 80 * 1024:
             self.logger.warning(
                 f"task requests {cfg.storage_mb}MB storage — mmini VMs have 80GB disks"
-            )
-
-        # TODO: implement MCP server support — start servers on the VM and
-        # pass connection info to the agent
-        if cfg.mcp_servers:
-            self.logger.warning(
-                "task defines mcp_servers — not yet supported in mmini"
             )
 
         # TODO: implement skills_dir — copy skills directory to the VM
@@ -138,26 +132,27 @@ class MminiEnvironment(BaseEnvironment):
             f"mmini sandbox created: {self._sandbox_id} (vm_ip={self._vm_ip})"
         )
 
-        # Create Harbor's expected directory structure.
-        # macOS SIP prevents writing to root dirs, so we use /tmp/harbor.
+        # Create Harbor's expected directory structure
+        # macOS SIP prevents writing to root dirs, so we use /tmp/harbor
         await self.sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace"
         )
 
-    async def setup_task(self, task_dir: Path | None) -> None:
+        # Run task setup (pre_command, delays) — runs before any agent
+        await self._setup_task()
+
+        # TODO: start MCP servers on the VM if configured
+        # (upload scripts, start background processes, etc.)
+
+    async def _setup_task(self) -> None:
         """Run pre-agent task setup from tests/setup/ if present."""
-        if not task_dir:
-            return
+        setup_dir = self._task_dir / "tests" / "setup"
 
-        setup_dir = task_dir / "tests" / "setup"
-
-        # Run pre_command.sh if it exists
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
             cmd = pre_cmd_path.read_text().strip()
-            # Strip shebang
             lines = [line for line in cmd.split("\n") if not line.startswith("#!")]
             cmd = "\n".join(lines).strip()
             if cmd:
@@ -166,9 +161,10 @@ class MminiEnvironment(BaseEnvironment):
                     result = await self.exec(cmd, timeout_sec=60)
                     if result.return_code == 0:
                         break
-                    self.logger.warning(f"pre_command attempt {attempt + 1} failed")
+                    self.logger.warning(
+                        f"pre_command attempt {attempt + 1} failed"
+                    )
 
-        # Wait for system to settle
         config_path = setup_dir / "config.json"
         delay = 10
         if config_path.exists():
@@ -182,9 +178,13 @@ class MminiEnvironment(BaseEnvironment):
             return
         if delete:
             try:
-                resp = await self._http.delete(f"/v1/sandboxes/{self._sandbox_id}")
+                resp = await self._http.delete(
+                    f"/v1/sandboxes/{self._sandbox_id}"
+                )
                 resp.raise_for_status()
-                self.logger.info(f"mmini sandbox destroyed: {self._sandbox_id}")
+                self.logger.info(
+                    f"mmini sandbox destroyed: {self._sandbox_id}"
+                )
             except Exception as e:
                 self.logger.error(f"failed to destroy sandbox: {e}")
         self._sandbox_id = None
@@ -216,7 +216,6 @@ class MminiEnvironment(BaseEnvironment):
         """Execute a command on the VM via the gateway's exec endpoint."""
         merged_env = self._merge_env(env)
 
-        # Remap Harbor paths in the command
         remapped_cmd = (
             command.replace("/logs/", f"{self._PATH_PREFIX}/logs/")
             .replace("/tests/", f"{self._PATH_PREFIX}/tests/")
@@ -227,7 +226,9 @@ class MminiEnvironment(BaseEnvironment):
 
         parts = []
         if merged_env:
-            exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in merged_env.items())
+            exports = " ".join(
+                f"{k}={shlex.quote(v)}" for k, v in merged_env.items()
+            )
             parts.append(f"export {exports};")
         if cwd:
             parts.append(f"cd {shlex.quote(self._remap(cwd))} &&")
@@ -254,18 +255,24 @@ class MminiEnvironment(BaseEnvironment):
         source_dir: Path | str,
         target_dir: str,
     ) -> None:
-        await self.sandbox.upload_dir(str(source_dir), self._remap(target_dir))
+        await self.sandbox.upload_dir(
+            str(source_dir), self._remap(target_dir)
+        )
 
     async def download_file(
         self,
         source_path: str,
         target_path: Path | str,
     ) -> None:
-        await self.sandbox.download_file(self._remap(source_path), str(target_path))
+        await self.sandbox.download_file(
+            self._remap(source_path), str(target_path)
+        )
 
     async def download_dir(
         self,
         source_dir: str,
         target_dir: Path | str,
     ) -> None:
-        await self.sandbox.download_dir(self._remap(source_dir), str(target_dir))
+        await self.sandbox.download_dir(
+            self._remap(source_dir), str(target_dir)
+        )
