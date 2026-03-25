@@ -89,8 +89,35 @@ class MminiEnvironment(BaseEnvironment):
     def vm_ip(self) -> str | None:
         return self._vm_ip
 
-    def _validate_definition(self):
-        pass
+    def _validate_definition(self) -> None:
+        cfg = self.task_env_config
+
+        # Warn about resource settings we can't enforce (VMs are pre-sized)
+        if cfg.cpus > 1 and cfg.cpus != 4:
+            self.logger.warning(
+                f"task requests {cfg.cpus} CPUs — mmini VMs are fixed at 4 cores"
+            )
+        if cfg.memory_mb > 0 and cfg.memory_mb != 8192:
+            self.logger.warning(
+                f"task requests {cfg.memory_mb}MB memory — mmini VMs are fixed at 8GB"
+            )
+        if cfg.storage_mb and cfg.storage_mb > 80 * 1024:
+            self.logger.warning(
+                f"task requests {cfg.storage_mb}MB storage — mmini VMs have 80GB disks"
+            )
+
+        # TODO: implement MCP server support — start servers on the VM and
+        # pass connection info to the agent
+        if cfg.mcp_servers:
+            self.logger.warning(
+                "task defines mcp_servers — not yet supported in mmini"
+            )
+
+        # TODO: implement skills_dir — copy skills directory to the VM
+        if cfg.skills_dir:
+            self.logger.warning(
+                "task defines skills_dir — not yet supported in mmini"
+            )
 
     async def start(self, force_build: bool = False) -> None:
         if self._sandbox_id is not None:
