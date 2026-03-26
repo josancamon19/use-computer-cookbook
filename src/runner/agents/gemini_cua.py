@@ -7,11 +7,15 @@ pattern as the Anthropic and OpenAI agents.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 from typing import Any
 
+from google import genai
+from google.genai import types
+from google.genai.types import Content, FunctionResponse, FunctionResponseBlob, FunctionResponsePart, Part
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -106,10 +110,6 @@ class GeminiCUAAgent(BaseCUAAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        from google import genai
-        from google.genai import types
-        from google.genai.types import Content, FunctionResponse, FunctionResponseBlob, FunctionResponsePart, Part
-
         sandbox = await self.pre_run(environment)
         self.steps[0]["message"] = instruction
 
@@ -254,7 +254,6 @@ class GeminiCUAAgent(BaseCUAAgent):
                     if mapped.get("_click_first"):
                         cx, cy = mapped["_click_first"]
                         await sandbox.mouse.click(cx, cy)
-                        import asyncio
                         await asyncio.sleep(0.3)
                         if mapped.get("_clear"):
                             await sandbox.keyboard.hotkey("command+a")
