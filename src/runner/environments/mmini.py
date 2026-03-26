@@ -137,7 +137,8 @@ class MminiEnvironment(BaseEnvironment):
         await self.sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
-            "/Users/lume/workspace"
+            "/Users/lume/workspace && "
+            "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin"
         )
 
         # Run task setup (pre_command, delays) — runs before any agent
@@ -210,9 +211,22 @@ class MminiEnvironment(BaseEnvironment):
     # /app and /workspace → home dir (for coding agents like claude-code)
     _WORKSPACE_DIR = "/Users/lume"
 
+    def _remap_str(self, s: str) -> str:
+        """Remap all known root paths in an arbitrary string."""
+        return (
+            s.replace("/logs/", f"{self._PATH_PREFIX}/logs/")
+            .replace("/logs\"", f"{self._PATH_PREFIX}/logs\"")
+            .replace("/logs'", f"{self._PATH_PREFIX}/logs'")
+            .replace("/tests/", f"{self._PATH_PREFIX}/tests/")
+            .replace("/solution/", f"{self._PATH_PREFIX}/solution/")
+            .replace("/installed-agent", f"{self._PATH_PREFIX}/installed-agent")
+            .replace("/app/", f"{self._WORKSPACE_DIR}/")
+            .replace("/workspace/", f"{self._WORKSPACE_DIR}/")
+        )
+
     def _remap(self, path: str) -> str:
         """Remap absolute paths for macOS."""
-        if path.startswith(("/logs", "/tests", "/solution")):
+        if path.startswith(("/logs", "/tests", "/solution", "/installed-agent")):
             return self._PATH_PREFIX + path
         if path.startswith(("/app", "/workspace")):
             return self._WORKSPACE_DIR
@@ -228,18 +242,13 @@ class MminiEnvironment(BaseEnvironment):
         """Execute a command on the VM via the gateway's exec endpoint."""
         merged_env = self._merge_env(env)
 
-        remapped_cmd = (
-            command.replace("/logs/", f"{self._PATH_PREFIX}/logs/")
-            .replace("/tests/", f"{self._PATH_PREFIX}/tests/")
-            .replace("/solution/", f"{self._PATH_PREFIX}/solution/")
-            .replace("/app/", f"{self._WORKSPACE_DIR}/")
-            .replace("/workspace/", f"{self._WORKSPACE_DIR}/")
-        )
+        remapped_cmd = self._remap_str(command)
 
         parts = []
         if merged_env:
+            remapped_env = {k: self._remap_str(v) for k, v in merged_env.items()}
             exports = " ".join(
-                f"{k}={shlex.quote(v)}" for k, v in merged_env.items()
+                f"{k}={shlex.quote(v)}" for k, v in remapped_env.items()
             )
             parts.append(f"export {exports};")
         if cwd:
