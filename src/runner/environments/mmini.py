@@ -150,6 +150,11 @@ class MminiEnvironment(BaseEnvironment):
         """Run pre-agent task setup from tests/setup/ if present."""
         setup_dir = self._task_dir / "tests" / "setup"
 
+        # Upload test.sh for the verifier (Harbor doesn't mount task dirs in remote envs)
+        test_script = self._task_dir / "tests" / "test.sh"
+        if test_script.exists():
+            await self.upload_file(test_script, "/tests/test.sh")
+
         # Upload task-specific files to VM if present
         files_dir = setup_dir / "files"
         if files_dir.is_dir() and any(files_dir.iterdir()):
