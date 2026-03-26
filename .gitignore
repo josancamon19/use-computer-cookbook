@@ -5,4 +5,5 @@ dist/
 *.egg-info/
 datasets/
 jobs/
+macosworld/tasks/
 .env
