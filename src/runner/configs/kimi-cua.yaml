@@ -1,0 +1,38 @@
+# Kimi K2.5 CUA via Tinker + generic pyautogui agent
+#
+# Usage:
+#   cd runner
+#   TINKER_API_KEY=... MMINI_API_KEY=sk-dev-... uv run harbor run \
+#     -c src/runner/configs/kimi-cua.yaml \
+#     --path datasets/macosworld_ready \
+#     -t "sys_apps__12fea1c8*"
+#
+# Required env vars:
+#   TINKER_API_KEY  — Thinking Machines Tinker API
+#   MMINI_API_KEY   — mmini gateway (dev)
+#
+jobs_dir: jobs
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 2
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8081"
+    delete: true
+agents:
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "moonshotai/Kimi-K2.5-VL"
+      kwargs:
+          llm_backend: tinker
+          max_steps: 10
+          max_tokens: 4096
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "openai/gpt-4o"
+      kwargs:
+          max_steps: 10
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"

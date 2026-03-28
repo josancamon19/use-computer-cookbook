@@ -1,4 +1,4 @@
-"""Generic CUA agent — any vision LLM via litellm, pyautogui-style output."""
+"""Generic CUA agent — any vision LLM via litellm or tinker, pyautogui-style output."""
 
 from __future__ import annotations
 
@@ -26,14 +26,59 @@ class GenericCUAAgent(BaseCUAAgent):
         logs_dir: Path,
         model_name: str | None = None,
         prompt_template: str = "pyautogui.txt",
+        llm_backend: str = "litellm",
+        max_tokens: int = 4096,
         **kwargs: Any,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
         self._prompt_template = load_prompt(prompt_template)
+        self._llm_backend = llm_backend
+        self._max_tokens = max_tokens
+        self._tinker_llm = None
 
     @staticmethod
     def name() -> str:
         return "generic-cua"
+
+    async def _get_completion(self, model: str, messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
+        """Call LLM and return (text, prompt_tokens, completion_tokens)."""
+        if self._llm_backend == "tinker":
+            return await self._tinker_completion(model, messages, max_tokens)
+        else:
+            return self._litellm_completion(model, messages, max_tokens)
+
+    def _litellm_completion(self, model: str, messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
+        response = litellm.completion(model=model, messages=messages, max_tokens=max_tokens)
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        return text, usage.prompt_tokens or 0, usage.completion_tokens or 0
+
+    async def _tinker_completion(self, model: str, messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
+        if self._tinker_llm is None:
+            from harbor.llms.tinker import TinkerLLM
+            self._tinker_llm = TinkerLLM(
+                model_name=model,
+                max_tokens=max_tokens,
+            )
+
+        # TinkerLLM.call() expects (prompt, message_history)
+        # Split system + history from the final user message
+        history = messages[:-1] if len(messages) > 1 else []
+        prompt = ""
+        last_msg = messages[-1] if messages else {"content": ""}
+        if isinstance(last_msg.get("content"), str):
+            prompt = last_msg["content"]
+        elif isinstance(last_msg.get("content"), list):
+            # Extract text parts from multimodal content
+            prompt = " ".join(
+                p.get("text", "") for p in last_msg["content"] if p.get("type") == "text"
+            )
+
+        response = await self._tinker_llm.call(prompt=prompt, message_history=history)
+        text = response.content or ""
+        prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+        completion_tokens = response.usage.completion_tokens if response.usage else 0
+        return text, prompt_tokens, completion_tokens
 
     async def run(
         self,
@@ -82,17 +127,11 @@ class GenericCUAAgent(BaseCUAAgent):
 
             messages = [{"role": "system", "content": system}, *history]
 
-            response = litellm.completion(model=model, messages=messages, max_tokens=1024)
+            text, in_tok, out_tok = await self._get_completion(model, messages, self._max_tokens)
+            self.total_in += in_tok
+            self.total_out += out_tok
 
-            history.append(
-                {"role": "assistant", "content": response.choices[0].message.content or ""}
-            )
-
-            usage = response.usage
-            self.total_in += usage.prompt_tokens or 0
-            self.total_out += usage.completion_tokens or 0
-
-            text = response.choices[0].message.content or ""
+            history.append({"role": "assistant", "content": text})
 
             code_blocks = re.findall(r"```python\s*\n(.*?)```", text, re.DOTALL)
             code_match = bool(code_blocks)
@@ -131,8 +170,8 @@ class GenericCUAAgent(BaseCUAAgent):
                 "source": "agent",
                 "message": text[:500],
                 "metrics": {
-                    "prompt_tokens": usage.prompt_tokens or 0,
-                    "completion_tokens": usage.completion_tokens or 0,
+                    "prompt_tokens": in_tok,
+                    "completion_tokens": out_tok,
                 },
             }
             if last_ss_path:
