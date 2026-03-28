@@ -23,7 +23,7 @@ environment:
     delete: true
 agents:
     - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "moonshotai/Kimi-K2.5-VL"
+      model_name: "moonshotai/Kimi-K2.5"
       kwargs:
           llm_backend: tinker
           max_steps: 10

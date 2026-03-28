@@ -75,7 +75,10 @@ class GenericCUAAgent(BaseCUAAgent):
             )
 
         response = await self._tinker_llm.call(prompt=prompt, message_history=history)
-        text = response.content or ""
+        content = response.content or ""
+        text = content if isinstance(content, str) else "".join(
+            p.get("text", "") if isinstance(p, dict) else str(p) for p in content
+        )
         prompt_tokens = response.usage.prompt_tokens if response.usage else 0
         completion_tokens = response.usage.completion_tokens if response.usage else 0
         return text, prompt_tokens, completion_tokens
