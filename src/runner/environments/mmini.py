@@ -22,7 +22,7 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from mmini.sandbox import AsyncSandbox
+from mmini.sandbox import AsyncSandbox as AsyncMacOSSandbox
 
 
 class MminiEnvironment(BaseEnvironment):
@@ -53,7 +53,7 @@ class MminiEnvironment(BaseEnvironment):
         self._http = httpx.AsyncClient(
             base_url=gateway_url, headers=headers, timeout=300,
         )
-        self._sandbox: AsyncSandbox | None = None
+        self._sandbox: AsyncMacOSSandbox | None = None
 
         super().__init__(
             environment_dir=environment_dir,
@@ -82,7 +82,7 @@ class MminiEnvironment(BaseEnvironment):
         return False
 
     @property
-    def sandbox(self) -> AsyncSandbox:
+    def sandbox(self) -> AsyncMacOSSandbox:
         if self._sandbox is None:
             raise RuntimeError("sandbox not available — call start() first")
         return self._sandbox
@@ -122,11 +122,11 @@ class MminiEnvironment(BaseEnvironment):
         data = resp.json()
         self._sandbox_id = data["sandbox_id"]
         self._vm_ip = data.get("vm_ip", "")
-        self._sandbox = AsyncSandbox(
+        self._sandbox = AsyncMacOSSandbox(
             sandbox_id=self._sandbox_id,
+            http=self._http,
             vnc_url=data.get("vnc_url", ""),
             ssh_url=data.get("ssh_url", ""),
-            http=self._http,
         )
         self.logger.info(
             f"mmini sandbox created: {self._sandbox_id} (vm_ip={self._vm_ip})"
