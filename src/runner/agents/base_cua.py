@@ -11,7 +11,7 @@ from typing import Any
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-from mmini.sandbox import AsyncSandbox
+from mmini.sandbox import AsyncMacOSSandbox
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -52,7 +52,7 @@ def build_system_prompt(
 
 
 async def execute_action(
-    sandbox: AsyncSandbox,
+    sandbox: AsyncMacOSSandbox,
     action: dict[str, Any],
     images_dir: Path,
     step_idx: int,
@@ -186,7 +186,7 @@ class BaseCUAAgent(BaseAgent):
         self.screen_height = screen_height
         self.task_dir = Path(task_dir) if task_dir else _resolve_task_dir(logs_dir)
         self._recording_id: str | None = None
-        self.sandbox: AsyncSandbox | None = None
+        self.sandbox: AsyncMacOSSandbox | None = None
         self.images_dir: Path = logs_dir / "images"
         self.steps: list[dict[str, Any]] = []
         self.total_in = 0
@@ -198,12 +198,12 @@ class BaseCUAAgent(BaseAgent):
     async def setup(self, environment: BaseEnvironment) -> None:
         pass
 
-    async def pre_run(self, environment: BaseEnvironment) -> AsyncSandbox:
+    async def pre_run(self, environment: BaseEnvironment) -> AsyncMacOSSandbox:
         """Common setup: get sandbox, start recording, run task setup, create images dir.
 
         Returns the sandbox for convenience.
         """
-        sandbox: AsyncSandbox | None = getattr(environment, "sandbox", None)
+        sandbox: AsyncMacOSSandbox | None = getattr(environment, "sandbox", None)
         if sandbox is None:
             raise RuntimeError("CUA agents require an environment with a .sandbox property")
         self.sandbox = sandbox
@@ -224,15 +224,15 @@ class BaseCUAAgent(BaseAgent):
         context.n_input_tokens = self.total_in
         context.n_output_tokens = self.total_out
 
-    async def start_recording(self, sandbox: AsyncSandbox) -> None:
+    async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:
         try:
             result = await sandbox.recording.start(name="trial")
-            self._recording_id = result.get("id") or result.get("recording_id")
+            self._recording_id = result.id
             self.logger.info(f"Recording started: {self._recording_id}")
         except Exception as e:
             self.logger.warning(f"Failed to start recording: {e}")
 
-    async def stop_recording(self, sandbox: AsyncSandbox) -> None:
+    async def stop_recording(self, sandbox: AsyncMacOSSandbox) -> None:
         if not self._recording_id:
             return
         try:

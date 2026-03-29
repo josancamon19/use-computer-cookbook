@@ -10,19 +10,17 @@ Usage in job config:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
 import shlex
 from pathlib import Path
 
-import httpx
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from mmini.sandbox import AsyncSandbox as AsyncMacOSSandbox
+from mmini.client import AsyncMmini
+from mmini.sandbox import AsyncMacOSSandbox
 
 
 class MminiEnvironment(BaseEnvironment):
@@ -46,13 +44,8 @@ class MminiEnvironment(BaseEnvironment):
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
-        headers = {}
         api_key = api_key or os.environ.get("MMINI_API_KEY", "")
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        self._http = httpx.AsyncClient(
-            base_url=gateway_url, headers=headers, timeout=300,
-        )
+        self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
         self._sandbox: AsyncMacOSSandbox | None = None
 
         super().__init__(
@@ -117,20 +110,11 @@ class MminiEnvironment(BaseEnvironment):
         if self._sandbox_id is not None:
             return
 
-        resp = await self._http.post("/v1/sandboxes?wait=true")
-        resp.raise_for_status()
-        data = resp.json()
-        self._sandbox_id = data["sandbox_id"]
-        self._vm_ip = data.get("vm_ip", "")
-        self._sandbox = AsyncMacOSSandbox(
-            sandbox_id=self._sandbox_id,
-            http=self._http,
-            vnc_url=data.get("vnc_url", ""),
-            ssh_url=data.get("ssh_url", ""),
-        )
-        self.logger.info(
-            f"mmini sandbox created: {self._sandbox_id} (vm_ip={self._vm_ip})"
-        )
+        self.logger.info("creating mmini sandbox...")
+        self._sandbox = await self._client.create(type="macos", wait=True)
+        self._sandbox_id = self._sandbox.sandbox_id
+        self._vm_ip = getattr(self._sandbox, "vm_ip", None)
+        self.logger.info(f"sandbox ready: {self._sandbox_id} (vm_ip={self._vm_ip})")
 
         # Create Harbor's expected directory structure
         # macOS SIP prevents writing to root dirs, so we use /tmp/harbor
@@ -154,50 +138,46 @@ class MminiEnvironment(BaseEnvironment):
         # Upload test.sh for the verifier (Harbor doesn't mount task dirs in remote envs)
         test_script = self._task_dir / "tests" / "test.sh"
         if test_script.exists():
+            self.logger.info("uploading test.sh")
             await self.upload_file(test_script, "/tests/test.sh")
 
         # Upload task-specific files to VM if present
         files_dir = setup_dir / "files"
         if files_dir.is_dir() and any(files_dir.iterdir()):
-            self.logger.info("Uploading task files to VM...")
+            self.logger.info("uploading task files to VM...")
             await self.upload_dir(files_dir, "/Users/lume/Benchmark_Backup")
 
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
-            cmd = pre_cmd_path.read_text().strip()
-
-            lines = [line for line in cmd.split("\n") if not line.startswith("#!")]
-            cmd = "\n".join(lines).strip()
-            if cmd:
-                self.logger.info("Running pre_command...")
-                for attempt in range(3):
-                    result = await self.exec(cmd, timeout_sec=60)
-                    if result.return_code == 0:
-                        break
-                    self.logger.warning(
-                        f"pre_command attempt {attempt + 1} failed"
+            raw = pre_cmd_path.read_text().strip()
+            lines = [
+                line.strip()
+                for line in raw.split("\n")
+                if line.strip() and not line.startswith("#!") and not line.strip().startswith("#")
+            ]
+            for i, line in enumerate(lines):
+                self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
+                result = await self.exec(line, timeout_sec=120)
+                if result.return_code != 0:
+                    raise RuntimeError(
+                        f"pre_command [{i+1}/{len(lines)}] failed "
+                        f"(rc={result.return_code}):\n"
+                        f"cmd: {line}\n"
+                        f"stdout: {result.stdout or ''}\n"
+                        f"stderr: {result.stderr or ''}"
                     )
+                else:
+                    self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
 
-        config_path = setup_dir / "config.json"
-        delay = 10
-        if config_path.exists():
-            data = json.loads(config_path.read_text())
-            delay = data.get("before_action_delay_seconds", 10)
-        if delay:
-            await asyncio.sleep(delay)
+        self.logger.info("task setup complete")
 
     async def stop(self, delete: bool = True) -> None:
-        if self._sandbox_id is None:
+        if self._sandbox is None:
             return
         if delete:
             try:
-                resp = await self._http.delete(
-                    f"/v1/sandboxes/{self._sandbox_id}"
-                )
-                resp.raise_for_status()
-                self.logger.info(
-                    f"mmini sandbox destroyed: {self._sandbox_id}"
-                )
+                await self._sandbox.close()
+                self.logger.info(f"mmini sandbox destroyed: {self._sandbox_id}")
             except Exception as e:
                 self.logger.error(f"failed to destroy sandbox: {e}")
         self._sandbox_id = None
@@ -257,12 +237,12 @@ class MminiEnvironment(BaseEnvironment):
         full_cmd = " ".join(parts)
 
         try:
-            return_code, stdout = await self.sandbox.exec_ssh(
-                full_cmd, timeout=timeout_sec or 120
-            )
-            return ExecResult(stdout=stdout, stderr=None, return_code=return_code)
+            result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout_sec or 30)
+            self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd[:120]}")
+            return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
         except Exception as e:
-            return ExecResult(stdout=None, stderr=str(e), return_code=1)
+            self.logger.error(f"exec exception: {type(e).__name__}: {e} cmd={full_cmd[:120]}")
+            return ExecResult(stdout=None, stderr=f"{type(e).__name__}: {e}", return_code=1)
 
     async def upload_file(
         self,

@@ -232,7 +232,6 @@ class GeminiCUAAgent(BaseCUAAgent):
             tool_calls: list[dict[str, Any]] = []
             obs_results: list[dict[str, Any]] = []
             text_parts: list[str] = []
-            last_ss_path: str | None = None
 
             for part in content.parts:
                 if part.function_call:
@@ -274,7 +273,6 @@ class GeminiCUAAgent(BaseCUAAgent):
 
                     if ss_bytes:
                         ss = ss_bytes
-                        last_ss_path = ss_path
 
                     obs: dict[str, Any] = {"content": result_text}
                     if ss_path:

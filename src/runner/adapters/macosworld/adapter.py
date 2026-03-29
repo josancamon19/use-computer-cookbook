@@ -12,7 +12,6 @@ is rewritten to use a VM-local staging path (/tmp/harbor/task_files/).
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,12 +115,11 @@ class MacOSWorldLoader:
         return len(self.all_task_ids(base_only=base_only))
 
 
-def _build_test_sh(grading_cmds: list, before_grading_delay: int = 0) -> str:
+def _build_test_sh(grading_cmds: list) -> str:
     """Generate test.sh with grading commands inlined."""
     lines = [
         "#!/bin/bash",
         "# Auto-generated grading script",
-        "set -e",
         "",
         '# Detect path prefix (macOS SIP blocks /tests, so mmini uses /tmp/harbor)',
         'PREFIX=""',
@@ -130,10 +128,7 @@ def _build_test_sh(grading_cmds: list, before_grading_delay: int = 0) -> str:
         "",
     ]
 
-    if before_grading_delay > 0:
-        lines.append("# Wait for system to settle before grading")
-        lines.append(f"sleep {before_grading_delay}")
-        lines.append("")
+    # before_grading_delay intentionally skipped — the runner handles delays externally
 
     if not grading_cmds:
         lines.append('echo "0" > "$REWARD"')
@@ -169,6 +164,20 @@ def _render(template: str, **kwargs) -> str:
     for key, value in kwargs.items():
         result = result.replace(f"{{{key}}}", str(value))
     return result
+
+
+# Per-task pre_command fixes for our VM image.
+# These run BEFORE the task's own pre_command to ensure the correct initial state.
+_PRE_COMMAND_FIXES: dict[str, str] = {
+    # Dark mode tasks: VM ships with dark mode, set light mode first
+    "eb346395-b8fe-03bc-a6e5-a58719b1edce": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
+    "ce71ae98-6947-6c18-87ac-cdecb1750e5a": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
+}
+
+
+def _split_chain(cmd: str) -> str:
+    """Split && chains into separate lines so each runs independently."""
+    return "\n".join(part.strip() for part in cmd.split(" && ") if part.strip())
 
 
 def _embed_backup_files(cmd: str, files_dir: Path, dest_dir: Path) -> None:
@@ -251,27 +260,23 @@ class MacOSWorldToHarbor:
         if isinstance(pre_command, dict):
             pre_command = pre_command.get("en", "")
 
-        # Always create pre_command.sh with env init; append task-specific command if present
-        env_init = (
-            "# Dismiss crash dialogs, eject leftover drives\n"
-            'find /Library/Logs/DiagnosticReports -type f -name "panic*.panic"'
-            " -mmin -20 2>/dev/null | grep -q . && osascript -e "
-            "'tell application \"System Events\" to click at {456,349}' && "
-            "rm -rf /Library/Logs/DiagnosticReports/*.panic\n"
-            "diskutil list | grep Creedence | awk '{print $NF}' | "
-            "xargs -I {} diskutil eject {} 2>/dev/null\n"
-            "true\n"
-        )
-        task_cmd = ""
+        # Build pre_command.sh from task-specific command (path-rewritten for lume VMs)
+        # Split && chains into separate lines so each command runs independently
+        cmd_lines = []
+        fix = _PRE_COMMAND_FIXES.get(task.task_id)
+        if fix:
+            cmd_lines.append(fix)
         if pre_command:
-            task_cmd = pre_command.replace("/Users/ec2-user", "/Users/lume")
-            task_cmd = task_cmd.replace("ec2-user", "lume")
+            rewritten = pre_command.replace("/Users/ec2-user", "/Users/lume")
+            rewritten = rewritten.replace("ec2-user", "lume")
             if self.files_dir and "Benchmark_Backup" in pre_command:
                 _embed_backup_files(pre_command, self.files_dir, setup_dir / "files")
+            cmd_lines.append(_split_chain(rewritten))
+        task_cmd = "\n".join(cmd_lines)
 
         pre_cmd_path = setup_dir / "pre_command.sh"
         pre_cmd_path.write_text(
-            f"#!/bin/bash\n{env_init}\n{task_cmd}\n" if task_cmd else f"#!/bin/bash\n{env_init}",
+            f"#!/bin/bash\n{task_cmd}\n" if task_cmd else "#!/bin/bash\n",
             encoding="utf-8",
         )
         pre_cmd_path.chmod(0o755)
@@ -292,7 +297,7 @@ class MacOSWorldToHarbor:
             [cmd.replace("/Users/ec2-user", "/Users/lume").replace("ec2-user", "lume"), score]
             for cmd, score in grading_cmds
         ]
-        test_sh = _build_test_sh(grading_cmds, task.before_grading_delay_seconds)
+        test_sh = _build_test_sh(grading_cmds)
         test_path = tests_dir / "test.sh"
         test_path.write_text(test_sh, encoding="utf-8")
         test_path.chmod(0o755)
