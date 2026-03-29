@@ -1,0 +1,41 @@
+# 10. Full fleet stress — 20 concurrent across all categories.
+# Eats 20 of 54 warm slots. Tests heartbeat stability, warm pool replenishment,
+# session management, and lume under sustained load across the fleet.
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 20
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 5
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
+          - "sys_apps__1dac89be*"
+          - "sys_apps__1f7c22a8*"
+          - "sys_apps__2c42adaf*"
+          - "sys_apps__3a61c43c*"
+          - "sys_apps__43cacdbb*"
+          - "sys_apps__4f7568c7*"
+          - "sys_apps__5a6b33d6*"
+          - "sys_apps__6e91ea49*"
+          - "sys_apps__7df26ea3*"
+          - "file_management__0156a050*"
+          - "file_management__09b8c538*"
+          - "file_management__1020ae86*"
+          - "file_management__119efc21*"
+          - "file_management__14b2bf12*"
+          - "productivity__08d3cedf*"
+          - "productivity__13e2c34e*"
+          - "sys_and_interface__1dac89be*"
+          - "sys_and_interface__2bbbc32a*"
+          - "sys_and_interface__5a6b33d6*"

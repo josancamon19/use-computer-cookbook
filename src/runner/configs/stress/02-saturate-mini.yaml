@@ -1,0 +1,24 @@
+# 2. Saturate warm pool — 5 concurrent tasks, needs 5 VMs (3 Minis)
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 5
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 5
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
+          - "sys_apps__1dac89be*"
+          - "sys_apps__1f7c22a8*"
+          - "file_management__0156a050*"
+          - "file_management__09b8c538*"

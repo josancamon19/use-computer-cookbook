@@ -1,0 +1,42 @@
+# 13. All agents race — every agent type on every task, concurrency 20.
+# 5 agents × 5 tasks = 25 trials. Tests agent diversity under contention.
+# Screenshot, click, type, SSH exec all happening simultaneously across agents.
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 20
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 8
+    - import_path: "runner.agents.openai_cua:OpenAICUAAgent"
+      model_name: "openai/computer-use-preview"
+      kwargs:
+          max_steps: 8
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "openai/gpt-4o"
+      kwargs:
+          max_steps: 8
+    - name: "claude-code"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_turns: 8
+    - name: "codex"
+      model_name: "openai/gpt-5.4-mini"
+      kwargs:
+          max_turns: 8
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
+          - "sys_apps__1dac89be*"
+          - "file_management__0156a050*"
+          - "productivity__000d01d7*"
+          - "sys_and_interface__2bbbc32a*"

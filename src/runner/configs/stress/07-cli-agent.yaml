@@ -1,0 +1,21 @@
+# 7. CLI agent — Claude Code via SSH. Different code path than CUA.
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 2
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - name: "claude-code"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_turns: 10
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
+          - "file_management__0156a050*"

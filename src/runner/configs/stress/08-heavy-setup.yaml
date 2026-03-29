@@ -1,0 +1,22 @@
+# 8. Heavy setup — tasks with complex pre_command. Tests setup timeouts and file ops.
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 3
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 5
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "productivity__*"
+          - "file_management__0156a050*"
+          - "file_management__09b8c538*"

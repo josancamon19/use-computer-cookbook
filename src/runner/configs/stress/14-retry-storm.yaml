@@ -1,0 +1,31 @@
+# 14. Retry storm — 10 tasks, 5 attempts each = 50 total runs, concurrency 10.
+# Hammers create/destroy cycling. Each task fails fast (3 steps), retries immediately.
+# 50 sandbox lifecycles in rapid succession.
+jobs_dir: jobs/stress
+n_attempts: 5
+orchestrator:
+    type: local
+    n_concurrent_trials: 10
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 3
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
+          - "sys_apps__1dac89be*"
+          - "sys_apps__1f7c22a8*"
+          - "sys_apps__2c42adaf*"
+          - "sys_apps__3a61c43c*"
+          - "sys_apps__43cacdbb*"
+          - "sys_apps__4f7568c7*"
+          - "sys_apps__5a6b33d6*"
+          - "sys_apps__6e91ea49*"
+          - "sys_apps__7df26ea3*"

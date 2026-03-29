@@ -1,0 +1,28 @@
+# 6. Multi-agent — 3 different agents on same task. Tests all API paths.
+jobs_dir: jobs/stress
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 3
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 5
+    - import_path: "runner.agents.openai_cua:OpenAICUAAgent"
+      model_name: "openai/computer-use-preview"
+      kwargs:
+          max_steps: 5
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "openai/gpt-4o"
+      kwargs:
+          max_steps: 5
+datasets:
+    - path: datasets/macosworld_ready
+      task_names:
+          - "sys_apps__12fea1c8*"
