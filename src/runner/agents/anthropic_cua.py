@@ -29,7 +29,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
-        return
+        # return
         self.steps[0]["message"] = instruction
 
         client = anthropic.Anthropic()

@@ -187,7 +187,7 @@ class BaseCUAAgent(BaseAgent):
         self.task_dir = Path(task_dir) if task_dir else _resolve_task_dir(logs_dir)
         self._recording_id: str | None = None
         self.sandbox: AsyncMacOSSandbox | None = None
-        self.images_dir: Path = logs_dir / "images"
+        self.images_dir: Path = (logs_dir / "images").resolve()
         self.steps: list[dict[str, Any]] = []
         self.total_in = 0
         self.total_out = 0

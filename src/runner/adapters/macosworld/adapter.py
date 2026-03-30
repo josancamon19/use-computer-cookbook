@@ -20,6 +20,8 @@ Known issues with specific tasks on our VMs:
     sys_and_interface/1df5d9f4
 - Backtick task: literal backtick in macOSWorld pre_command data, bad source data.
     sys_and_interface/17fed363
+- METAR API task: grading curls external API, empty response makes grep match anything.
+    multi_apps/252f44fc
 """
 
 from __future__ import annotations
@@ -227,6 +229,12 @@ _PRE_COMMAND_FIXES: dict[str, str] = {
     # Dark mode tasks: VM ships with dark mode, set light mode first
     "eb346395-b8fe-03bc-a6e5-a58719b1edce": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
     "ce71ae98-6947-6c18-87ac-cdecb1750e5a": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
+    # TODO: these tasks auto-pass because our VM's Dock/settings don't match
+    # macOSWorld's expected initial state. Need to figure out the right Dock layout.
+    # "de2ce6d7-b8dc-2507-5c7e-c14f01c63a4c": "add Safari to Dock",
+    # "1dac89be-62ba-1f2d-2a0f-3f1cd2587ef0": "add Safari to Dock",
+    # "5a6b33d6-271f-3003-1f4f-e15dec4f8769": "add Freeform to Dock",
+    # "17fed363-d017-b26c-22f2-ec1865306075": "set notification previews to always",
 }
 
 
