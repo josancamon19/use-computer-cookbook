@@ -6,6 +6,15 @@ Usage in job config:
       import_path: "runner.environments.mmini:MminiEnvironment"
       kwargs:
         gateway_url: "http://localhost:8080"
+
+TODO: Some tasks score 1.0 without agent interaction because the VM's
+initial state already satisfies the grading condition (e.g. dark mode
+already enabled, Safari not in Dock). These false positives are tracked
+in adapter.py's _PRE_COMMAND_FIXES. Need to either:
+  - Fix the VM base image to match macOSWorld's expected initial state
+  - Add pre_commands that reset state before each task
+  - Filter these tasks out of evaluation runs
+See adapter.py docstring for the full list of affected task IDs.
 """
 
 from __future__ import annotations
