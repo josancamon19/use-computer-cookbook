@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import io
 from typing import Any
 
 import anthropic
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+from PIL import Image
 
 from runner.agents.base_cua import (
     BaseCUAAgent,
@@ -39,19 +42,37 @@ class AnthropicCUAAgent(BaseCUAAgent):
         tool_type = "computer_20251124" if uses_new else "computer_20250124"
         beta = "computer-use-2025-11-24" if uses_new else "computer-use-2025-01-24"
 
+        # Anthropic's vision model internally resizes screenshots.
+        # Declaring 1280x800 ensures coordinates match the model's internal space.
+        # We scale coordinates to actual VM resolution (1920x1080) in execute_action.
+        self._api_width = 1280
+        self._api_height = 800
         computer_tool: dict[str, Any] = {
             "type": tool_type,
             "name": "computer",
-            "display_width_px": self.screen_width,
-            "display_height_px": self.screen_height,
+            "display_width_px": self._api_width,
+            "display_height_px": self._api_height,
             "display_number": 1,
         }
 
+        # Scale factors: model coords → VM coords
+        self._sx = self.screen_width / self._api_width
+        self._sy = self.screen_height / self._api_height
+
         system = build_system_prompt(
             load_prompt("anthropic.txt"),
-            self.screen_width,
-            self.screen_height,
+            self._api_width,
+            self._api_height,
         )
+
+        def resize_ss(png_bytes: bytes) -> bytes:
+            """Resize screenshot to API dimensions."""
+            img = Image.open(io.BytesIO(png_bytes))
+            if img.size != (self._api_width, self._api_height):
+                img = img.resize((self._api_width, self._api_height), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
 
         # Initial screenshot
         ss = await sandbox.screenshot.take_full_screen()
@@ -67,7 +88,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
                         "source": {
                             "type": "base64",
                             "media_type": "image/png",
-                            "data": base64.b64encode(ss).decode(),
+                            "data": base64.b64encode(resize_ss(ss)).decode(),
                         },
                     },
                 ],
@@ -118,8 +139,17 @@ class AnthropicCUAAgent(BaseCUAAgent):
                     }
                 )
 
+                # Scale coordinates from API space (1280x800) to VM space (1920x1080)
+                scaled = dict(action)
+                if "coordinate" in scaled:
+                    x, y = scaled["coordinate"]
+                    scaled["coordinate"] = [int(x * self._sx), int(y * self._sy)]
+                if "start_coordinate" in scaled:
+                    x, y = scaled["start_coordinate"]
+                    scaled["start_coordinate"] = [int(x * self._sx), int(y * self._sy)]
+
                 result_text, ss_bytes, ss_path = await execute_action(
-                    sandbox, action, self.images_dir, step_idx + 1,
+                    sandbox, scaled, self.images_dir, step_idx + 1,
                 )
 
                 content: list[dict[str, Any]] = [{"type": "text", "text": result_text}]
@@ -130,7 +160,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/png",
-                                "data": base64.b64encode(ss_bytes).decode(),
+                                "data": base64.b64encode(resize_ss(ss_bytes)).decode(),
                             },
                         }
                     )
