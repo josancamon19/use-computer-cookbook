@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -113,8 +114,8 @@ class MminiEnvironment(BaseEnvironment):
         self.logger.info("creating mmini sandbox...")
         self._sandbox = await self._client.create(type="macos", wait=True)
         self._sandbox_id = self._sandbox.sandbox_id
-        self._vm_ip = getattr(self._sandbox, "vm_ip", None)
-        self.logger.info(f"sandbox ready: {self._sandbox_id} (vm_ip={self._vm_ip})")
+        self._vm_ip = self._sandbox.vm_ip
+        self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
 
         # Create Harbor's expected directory structure
         # macOS SIP prevents writing to root dirs, so we use /tmp/harbor
@@ -141,15 +142,13 @@ class MminiEnvironment(BaseEnvironment):
             self.logger.info("uploading test.sh")
             await self.upload_file(test_script, "/tests/test.sh")
 
-        # Upload task-specific files to VM if present
-        files_dir = setup_dir / "files"
-        if files_dir.is_dir() and any(files_dir.iterdir()):
-            self.logger.info("uploading task files to VM...")
-            await self.upload_dir(files_dir, "/Users/lume/Benchmark_Backup")
-
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
             raw = pre_cmd_path.read_text().strip()
+
+            # Upload Benchmark_Backup files referenced by pre_command
+            await self._upload_benchmark_files(raw)
+
             lines = [
                 line.strip()
                 for line in raw.split("\n")
@@ -170,6 +169,40 @@ class MminiEnvironment(BaseEnvironment):
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
 
         self.logger.info("task setup complete")
+
+    # Shared benchmark assets used by macOSWorld tasks
+    _BENCHMARK_ASSETS_DIR = Path(__file__).resolve().parents[3] / "macosworld" / "files"
+    _BENCHMARK_VM_DIR = "/Users/lume/Benchmark_Backup"
+
+    async def _upload_benchmark_files(self, pre_command_text: str) -> None:
+        """Parse pre_command for Benchmark_Backup/ references and upload only needed files."""
+        # Extract top-level asset names from Benchmark_Backup/ references
+        # Handles quoted paths (spaces) and subpaths (BenchmarkApp/BenchmarkApp)
+        refs = set()
+        # Quoted: "Benchmark_Backup/iMovie Library.imovielibrary"
+        for m in re.finditer(r'"[^"]*Benchmark_Backup/([^"]+)"', pre_command_text):
+            refs.add(m.group(1).split("/")[0].rstrip())
+        # Unquoted: Benchmark_Backup/benchmark_files or Benchmark_Backup/X/Y
+        for m in re.finditer(r'(?<!")Benchmark_Backup/(\S+)', pre_command_text):
+            refs.add(m.group(1).split("/")[0].rstrip(";"))
+        if not refs:
+            return
+
+        # Ensure target dir exists
+        await self.sandbox.exec_ssh(f"mkdir -p {self._BENCHMARK_VM_DIR}")
+
+        for name in sorted(refs):
+            local = self._BENCHMARK_ASSETS_DIR / name
+            remote = f"{self._BENCHMARK_VM_DIR}/{name}"
+            if not local.exists():
+                self.logger.warning(f"benchmark asset not found: {local}")
+                continue
+            if local.is_dir():
+                self.logger.info(f"uploading {name}/ -> {remote}")
+                await self.upload_dir(local, remote)
+            else:
+                self.logger.info(f"uploading {name} -> {remote}")
+                await self.upload_file(local, remote)
 
     async def stop(self, delete: bool = True) -> None:
         if self._sandbox is None:
