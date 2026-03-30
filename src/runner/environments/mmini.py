@@ -38,10 +38,12 @@ class MminiEnvironment(BaseEnvironment):
         gateway_url: str = "http://localhost:8080",
         api_key: str = "",
         ssh_user: str = "lume",
+        host: str = "",
         **kwargs,
     ):
         self._gateway_url = gateway_url
         self._ssh_user = ssh_user
+        self._host = host or os.environ.get("MMINI_HOST", "")
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
@@ -112,7 +114,7 @@ class MminiEnvironment(BaseEnvironment):
             return
 
         self.logger.info("creating mmini sandbox...")
-        self._sandbox = await self._client.create(type="macos", wait=True)
+        self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
         self._sandbox_id = self._sandbox.sandbox_id
         self._vm_ip = self._sandbox.vm_ip
         self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")

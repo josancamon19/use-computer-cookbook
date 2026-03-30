@@ -2,36 +2,45 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 2
+    n_concurrent_trials: 10
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
-        gateway_url: "http://10.10.10.2:8080"
+        gateway_url: "http://10.10.10.2:8081"
     delete: true
 agents:
     # CUA agents (mouse/keyboard/screenshot)
     - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
       model_name: "anthropic/claude-sonnet-4-6"
       kwargs:
-          max_steps: 5
-    - import_path: "runner.agents.openai_cua:OpenAICUAAgent"
-      model_name: "openai/computer-use-preview"
-      kwargs:
-          max_steps: 5
-    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "openai/gpt-4o"
-      kwargs:
-          max_steps: 5
-    # CLI agents (installed in VM)
-    - name: "claude-code"
-      model_name: "anthropic/claude-sonnet-4-6"
-      kwargs:
-          max_turns: 20
-    - name: "codex"
-      model_name: "openai/gpt-5.4-mini"
-      kwargs:
-          max_turns: 20
+          max_steps: 20
+    # - import_path: "runner.agents.openai_cua:OpenAICUAAgent"
+    #   model_name: "openai/computer-use-preview"
+    #   kwargs:
+    #       max_steps: 5
+    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+    #   model_name: "openai/gpt-5.4-mini"
+    #   kwargs:
+    #       max_steps: 5
+    # # CLI agents (installed in VM)
+    # - name: "claude-code"
+    #   model_name: "anthropic/claude-sonnet-4-6"
+    #   kwargs:
+    #       max_turns: 20
+    # - name: "codex"
+    #   model_name: "openai/gpt-5.4-mini"
+    #   kwargs:
+    #       max_turns: 20
 datasets:
     - path: datasets/macosworld_ready
       task_names:
-          - "sys_apps__12fea1c8*"
+          - "sys_apps__96786064-5d99-e102*"
+          # - "sys_apps__152a753b-7258-6630*"
+          # - "sys_and_interface__94cab5ba-eb70*"
+          # - "sys_and_interface__694e8aa5-9106*"
+          # - "productivity__7cf47313-5280-71d5*"
+          # - "productivity__0bc05a1d-1e5a-c967*"
+          # - "safety__72158f95-631f-8af0-20f3*"
+          # - "safety__3ef3a054-c2cc-be98-dc08*"
+          # - "file_management__f576f917-0978*"
+          # - "file_management__9fe98f0a-0450*"

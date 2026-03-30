@@ -13,6 +13,36 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from mmini.sandbox import AsyncMacOSSandbox
 
+# Anthropic CUA outputs key names that don't match computer-server's expected names.
+_KEY_ALIASES = {
+    "Escape": "esc",
+    "escape": "esc",
+    "Return": "enter",
+    "return": "enter",
+    "super": "cmd",
+    "meta": "cmd",
+    "Super_L": "cmd",
+    "Meta_L": "cmd",
+    "Control": "ctrl",
+    "Shift": "shift",
+    "Alt": "alt",
+    "Backspace": "backspace",
+    "Delete": "delete",
+    "ArrowUp": "up",
+    "ArrowDown": "down",
+    "ArrowLeft": "left",
+    "ArrowRight": "right",
+    "Page_Up": "pageup",
+    "Page_Down": "pagedown",
+}
+
+
+def _normalize_key(key: str) -> str:
+    """Map agent key names to computer-server key names."""
+    if "+" in key:
+        return "+".join(_KEY_ALIASES.get(k, k) for k in key.split("+"))
+    return _KEY_ALIASES.get(key, key)
+
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
@@ -90,7 +120,7 @@ async def execute_action(
     elif action_type == "type":
         await sandbox.keyboard.type(action.get("text", ""))
     elif action_type == "key":
-        key = action.get("key", "")
+        key = _normalize_key(action.get("key", "") or action.get("text", ""))
         if "+" in key:
             await sandbox.keyboard.hotkey(key)
         else:
