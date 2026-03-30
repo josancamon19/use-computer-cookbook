@@ -205,10 +205,10 @@ class MminiEnvironment(BaseEnvironment):
                 await self.upload_file(local, remote)
 
         # Verify uploads landed correctly
-        rc, listing = await self.sandbox.exec_ssh(
+        result = await self.sandbox.exec_ssh(
             f"find {self._BENCHMARK_VM_DIR} -maxdepth 2 -type f | head -30 && echo '---' && du -sh {self._BENCHMARK_VM_DIR}/*"
         )
-        self.logger.info(f"Benchmark_Backup contents:\n{listing}")
+        self.logger.info(f"Benchmark_Backup contents:\n{result.stdout}")
 
     async def stop(self, delete: bool = True) -> None:
         if self._sandbox is None:
