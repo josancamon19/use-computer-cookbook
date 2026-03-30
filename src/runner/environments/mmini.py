@@ -156,7 +156,7 @@ class MminiEnvironment(BaseEnvironment):
             ]
             for i, line in enumerate(lines):
                 self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
-                result = await self.exec(line, timeout_sec=120)
+                result = await self.exec(line)
                 if result.return_code != 0:
                     raise RuntimeError(
                         f"pre_command [{i+1}/{len(lines)}] failed "
@@ -256,7 +256,6 @@ class MminiEnvironment(BaseEnvironment):
         command: str,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-        timeout_sec: int | None = None,
     ) -> ExecResult:
         """Execute a command on the VM via the gateway's exec endpoint."""
         merged_env = self._merge_env(env)
@@ -275,13 +274,9 @@ class MminiEnvironment(BaseEnvironment):
         parts.append(remapped_cmd)
         full_cmd = " ".join(parts)
 
-        try:
-            result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout_sec or 30)
-            self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd[:120]}")
-            return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
-        except Exception as e:
-            self.logger.error(f"exec exception: {type(e).__name__}: {e} cmd={full_cmd[:120]}")
-            return ExecResult(stdout=None, stderr=f"{type(e).__name__}: {e}", return_code=1)
+        result = await self.sandbox.exec_ssh(full_cmd, timeout=30)
+        self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd}")
+        return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
 
     async def upload_file(
         self,

@@ -17,8 +17,8 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-mmini = { git = "https://github.com/josancamon19/mmini-sdk.git", branch = "main" }
 harbor = { git = "https://github.com/harbor-framework/harbor.git", branch = "main" }
+mmini = { path = "../sdk", editable = true }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

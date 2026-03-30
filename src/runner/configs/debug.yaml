@@ -1,0 +1,22 @@
+jobs_dir: jobs
+n_attempts: 3
+orchestrator:
+    type: local
+    n_concurrent_trials: 54
+environment:
+    import_path: "runner.environments.mmini:MminiEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8081"
+    delete: true
+agents:
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 1
+datasets:
+    - path: datasets/macosworld_ready
+      # task_names:
+      #     - "safety__7f81662d-5c57-9078-b0c4-e1af24d63304"
+      #     - "productivity__6a40e62d-c990-7d55-81fb-f2ced53664b7"
+
+# then select 10 that run, and try them with anthropic_cua agent with some realistic steps, check the actual result/

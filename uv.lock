@@ -1316,10 +1316,13 @@ wheels = [
 [[package]]
 name = "mmini"
 version = "0.1.0"
-source = { git = "https://github.com/josancamon19/mmini-sdk.git?branch=main#af023ffd78233012dcb75dc49e6086cf43188714" }
+source = { editable = "../sdk" }
 dependencies = [
     { name = "httpx", extra = ["http2"] },
 ]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", extras = ["http2"], specifier = ">=0.27" }]
 
 [[package]]
 name = "modal"
@@ -2417,7 +2420,7 @@ requires-dist = [
     { name = "harbor", git = "https://github.com/harbor-framework/harbor.git?branch=main" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "litellm", specifier = ">=1.0.0" },
-    { name = "mmini", git = "https://github.com/josancamon19/mmini-sdk.git?branch=main" },
+    { name = "mmini", editable = "../sdk" },
     { name = "openai", specifier = ">=1.0.0" },
 ]
 

@@ -19,7 +19,7 @@ datasets:
     - path: datasets/macosworld_ready
       task_names:
           - "sys_apps__12fea1c8*"
-          - "sys_apps__1dac89be*"
-          - "sys_apps__1f7c22a8*"
-          - "sys_apps__2c42adaf*"
-          - "sys_apps__3a61c43c*"
+          - "sys_apps__07709761*"
+          - "sys_apps__0cbfcae1*"
+          - "sys_apps__0e224b29*"
+          - "sys_apps__1329d65e*"

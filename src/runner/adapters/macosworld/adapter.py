@@ -7,6 +7,19 @@ and produces one Harbor task directory per task.
 When a task references Benchmark_Backup files, the needed files are
 copied into the task's tests/setup/files/ directory and the pre_command
 is rewritten to use a VM-local staging path (/tmp/harbor/task_files/).
+
+Known issues with specific tasks on our VMs:
+- Contacts tasks: osascript data queries hang (iCloud sync blocks on fresh VMs).
+  Grading fails, tasks themselves are runnable. Affected tasks:
+    sys_apps/89f88c8c, sys_apps/b071a2dc, sys_apps/64824755,
+    sys_apps/48cf0af3, safety/9d73393d
+- Reminders tasks: same iCloud sync hang on osascript data queries.
+    sys_apps/e8bc0bd1, sys_apps/2f72dba5, sys_apps/b431b94b,
+    safety/e7491382, sys_apps/a204124e, sys_apps/4a89fe83
+- Keystroke task: osascript not allowed to send keystrokes (accessibility TCC).
+    sys_and_interface/1df5d9f4
+- Backtick task: literal backtick in macOSWorld pre_command data, bad source data.
+    sys_and_interface/17fed363
 """
 
 from __future__ import annotations
@@ -99,6 +112,8 @@ class MacOSWorldLoader:
                 task = MacOSWorldTask.from_json(json_file, cat_dir.name)
                 if (base_only or ready_only) and task.needs_apps:
                     continue
+                if task.task_id in _EXCLUDED_TASK_IDS:
+                    continue
                 pairs.append((cat_dir.name, json_file.stem))
         return pairs
 
@@ -166,6 +181,46 @@ def _render(template: str, **kwargs) -> str:
     return result
 
 
+# Tasks excluded from export — broken on our VM image.
+# Each entry: task UUID → reason (what needs to change to unblock it).
+_EXCLUDED_TASK_IDS: dict[str, str] = {
+    # Keystroke pre_command: TCC accessibility permission not granted.
+    # Fix: grant "System Events" accessibility in base image via TCC.db
+    "1df5d9f4-5b69-5e98-a8ab-d415dae9ca83": "pre_command keystroke blocked by TCC",
+    # Grader hangs: Contacts osascript hangs on fresh VM (never writes reward file).
+    # Fix: investigate why osascript queries to Contacts hang — possibly needs first-launch
+    "89f88c8c-2c64-91a0-444f-fa71315cd92c": "grader: Contacts osascript hangs",
+    "b071a2dc-6b16-5e76-16a8-72803d557495": "grader: Contacts osascript hangs",
+    "64824755-362d-64b6-fcac-e7c5348a09f0": "grader: Contacts osascript hangs",
+    "9d73393d-14a3-1259-70fb-32aae63b3b80": "grader: Contacts osascript hangs",
+    "a204124e-c06a-08b1-13fa-5e61f689180c": "grader: Contacts osascript hangs",
+    # Grader hangs: Reminders osascript hangs on fresh VM (never writes reward file).
+    # Fix: investigate why osascript queries to Reminders hang
+    "e8bc0bd1-1618-ea00-345b-589b1fef3f99": "grader: Reminders osascript hangs",
+    "b431b94b-193c-0478-1e26-709f7d3aa453": "grader: Reminders osascript hangs",
+    "2f72dba5-c364-d21b-7040-684f4d6d40b7": "grader: Reminders osascript hangs",
+    "48cf0af3-0612-dbcd-14da-d5202eed6ce9": "grader: Reminders osascript hangs",
+    "4a89fe83-8a93-ecd4-7841-c0bb470571c2": "grader: Reminders osascript hangs",
+    "e7491382-6e93-288d-9d67-24369c382e86": "grader: Reminders osascript hangs",
+    # Grader hangs: Media tasks — QuickTime/Preview osascript queries timeout.
+    # Fix: investigate why these specific osascript queries hang
+    "1ea85063-355f-bfad-3de7-3ab038261d62": "grader: QuickTime osascript hangs",
+    "e2a6a1ac-e352-6680-00ae-d191a817d143": "grader: media osascript hangs",
+    "efd1a2f9-b0b5-f14b-1fac-70a7f8e8a9e7": "grader: media osascript hangs",
+    # Grader hangs: multi_apps tasks — grader osascript doesn't write reward file.
+    # Fix: investigate grader commands
+    "48a16605-74e7-c9d8-01d7-3001bc0b0c1d": "grader: osascript hangs, no reward file",
+    "f0147143-27e5-e942-cd8c-ab723dc6e490": "grader: osascript hangs, no reward file",
+    # Non-deterministic failures (~5-10% flake rate across pass@50).
+    # Fail on random Minis with RewardFileNotFoundError or RuntimeError.
+    # Grader osascript sometimes finishes in time, sometimes doesn't.
+    # productivity__6a40e62d: 45/50 ok — 3 RewardFileNotFound + 2 RuntimeError
+    "6a40e62d-c990-7d55-81fb-f2ced53664b7": "flaky grader: 90% pass rate, osascript timeout",
+    # safety__7f81662d: 47/50 ok — 3 RewardFileNotFound
+    "7f81662d-5c57-9078-b0c4-e1af24d63304": "flaky grader: 94% pass rate, osascript timeout",
+}
+
+
 # Per-task pre_command fixes for our VM image.
 # These run BEFORE the task's own pre_command to ensure the correct initial state.
 _PRE_COMMAND_FIXES: dict[str, str] = {
@@ -173,6 +228,24 @@ _PRE_COMMAND_FIXES: dict[str, str] = {
     "eb346395-b8fe-03bc-a6e5-a58719b1edce": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
     "ce71ae98-6947-6c18-87ac-cdecb1750e5a": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
 }
+
+
+# Keys that don't exist on fresh VMs — defaults delete fails with "Domain not found".
+# The clean VM state is already the desired state for these.
+_SKIP_DEFAULTS_DELETE = [
+    "defaults delete -g KeyRepeat",
+    "defaults delete -g InitialKeyRepeat",
+    "defaults delete -g AppleAccentColor",
+    "defaults delete com.apple.universalaccess hoverTextEnabled",
+    "defaults delete com.apple.universalaccess hoverTypingEnabled",
+    "defaults delete com.apple.universalaccess closeViewHotkeysEnabled",
+]
+
+
+def _skip_defaults_delete(cmd: str) -> bool:
+    """Skip defaults delete for keys that don't exist on fresh VMs."""
+    stripped = cmd.strip()
+    return any(stripped.startswith(s) for s in _SKIP_DEFAULTS_DELETE)
 
 
 def _split_chain(cmd: str) -> str:
@@ -267,11 +340,16 @@ class MacOSWorldToHarbor:
         if fix:
             cmd_lines.append(fix)
         if pre_command:
-            rewritten = pre_command.replace("/Users/ec2-user", "/Users/lume")
+            # Strip stray backticks (bad source data in some tasks)
+            rewritten = pre_command.lstrip("`")
+            rewritten = rewritten.replace("/Users/ec2-user", "/Users/lume")
             rewritten = rewritten.replace("ec2-user", "lume")
             if self.files_dir and "Benchmark_Backup" in pre_command:
                 _embed_backup_files(pre_command, self.files_dir, setup_dir / "files")
-            cmd_lines.append(_split_chain(rewritten))
+            split = _split_chain(rewritten)
+            cmd_lines.append("\n".join(
+                l for l in split.split("\n") if not _skip_defaults_delete(l)
+            ))
         task_cmd = "\n".join(cmd_lines)
 
         pre_cmd_path = setup_dir / "pre_command.sh"
