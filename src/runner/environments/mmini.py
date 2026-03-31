@@ -109,30 +109,42 @@ class MminiEnvironment(BaseEnvironment):
                 "task defines skills_dir — not yet supported in mmini"
             )
 
+    _MAX_CREATE_ATTEMPTS = 5
+
     async def start(self, force_build: bool = False) -> None:
         if self._sandbox_id is not None:
             return
 
-        self.logger.info("creating mmini sandbox...")
-        self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
-        self._sandbox_id = self._sandbox.sandbox_id
-        self._vm_ip = self._sandbox.vm_ip
-        self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
-
-        # Create Harbor's expected directory structure
-        # macOS SIP prevents writing to root dirs, so we use /tmp/harbor
-        await self.sandbox.exec_ssh(
+        setup_cmd = (
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace && "
             "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin"
         )
 
-        # Run task setup (pre_command, delays) — runs before any agent
-        await self._setup_task()
+        for attempt in range(1, self._MAX_CREATE_ATTEMPTS + 1):
+            self.logger.info("creating mmini sandbox... (attempt %d/%d)", attempt, self._MAX_CREATE_ATTEMPTS)
+            self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
+            self._sandbox_id = self._sandbox.sandbox_id
+            self._vm_ip = self._sandbox.vm_ip
+            self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
 
-        # TODO: start MCP servers on the VM if configured
-        # (upload scripts, start background processes, etc.)
+            try:
+                await self.sandbox.exec_ssh(setup_cmd)
+                await self._setup_task()
+                break
+            except Exception as e:
+                self.logger.warning(f"sandbox {self._sandbox_id} unhealthy: {e}")
+                try:
+                    await self._sandbox.close()
+                except Exception:
+                    pass
+                self._sandbox = None
+                self._sandbox_id = None
+                self._vm_ip = None
+                if attempt == self._MAX_CREATE_ATTEMPTS:
+                    raise
+                self.logger.info("sandbox VM is broken — requesting a new one")
 
     async def _setup_task(self) -> None:
         """Run pre-agent task setup from tests/setup/ if present."""
