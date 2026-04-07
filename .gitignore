@@ -6,4 +6,8 @@ dist/
 datasets/
 jobs/
 macosworld/tasks/
+macosworld/files/
 .env
+.DS_Store
+.vincent
+*.mp4
