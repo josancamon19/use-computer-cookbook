@@ -32,7 +32,12 @@ class AnthropicCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
-        # return
+        # --- Lume smoke-test: screenshot + early return (comment out to run normally) ---
+        ss = await sandbox.screenshot.take_full_screen()
+        (self.images_dir / "step_000.png").write_bytes(ss)
+        self.logger.info(f"Screenshot saved to {self.images_dir / 'step_000.png'}")
+        return
+        # --- end smoke-test ---
         self.steps[0]["message"] = instruction
 
         client = anthropic.Anthropic()
