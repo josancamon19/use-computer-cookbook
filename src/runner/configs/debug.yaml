@@ -2,7 +2,7 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 1
+    n_concurrent_trials: 72
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -12,8 +12,6 @@ agents:
     - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
       model_name: "anthropic/claude-sonnet-4-6"
       kwargs:
-          max_steps: 20
+          max_steps: 1
 datasets:
     - path: datasets/macosworld_ready
-      task_names:
-          - "sys_apps__259bcb80*"

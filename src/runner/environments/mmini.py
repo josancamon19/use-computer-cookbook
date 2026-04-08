@@ -19,10 +19,8 @@ See adapter.py docstring for the full list of affected task IDs.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import random
 import re
 import shlex
 from pathlib import Path
@@ -33,10 +31,6 @@ from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
 from mmini.client import AsyncMmini
 from mmini.sandbox import AsyncMacOSSandbox
-
-_OP_RETRIES = 1
-_OP_RETRY_DELAY = 2.0
-_EXEC_JITTER_MAX = 3.0
 
 
 class MminiEnvironment(BaseEnvironment):
@@ -124,42 +118,23 @@ class MminiEnvironment(BaseEnvironment):
                 "task defines skills_dir — not yet supported in mmini"
             )
 
-    _MAX_CREATE_ATTEMPTS = 5
-
     async def start(self, force_build: bool = False) -> None:
         if self._sandbox_id is not None:
             return
 
-        setup_cmd = (
+        self.logger.info("creating mmini sandbox...")
+        self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
+        self._sandbox_id = self._sandbox.sandbox_id
+        self._vm_ip = self._sandbox.vm_ip
+        self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
+
+        await self.sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace && "
             "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin"
         )
-
-        for attempt in range(1, self._MAX_CREATE_ATTEMPTS + 1):
-            self.logger.info("creating mmini sandbox... (attempt %d/%d)", attempt, self._MAX_CREATE_ATTEMPTS)
-            self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
-            self._sandbox_id = self._sandbox.sandbox_id
-            self._vm_ip = self._sandbox.vm_ip
-            self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
-
-            try:
-                await self.sandbox.exec_ssh(setup_cmd)
-                await self._setup_task()
-                break
-            except Exception as e:
-                self.logger.warning(f"sandbox {self._sandbox_id} unhealthy: {e}")
-                try:
-                    await self._sandbox.close()
-                except Exception:
-                    pass
-                self._sandbox = None
-                self._sandbox_id = None
-                self._vm_ip = None
-                if attempt == self._MAX_CREATE_ATTEMPTS:
-                    raise
-                self.logger.info("sandbox VM is broken — requesting a new one")
+        await self._setup_task()
 
     async def _setup_task(self) -> None:
         """Run pre-agent task setup from tests/setup/ if present."""
@@ -332,105 +307,36 @@ class MminiEnvironment(BaseEnvironment):
         timeout = timeout_sec or 30
         full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
-        await asyncio.sleep(random.uniform(0, _EXEC_JITTER_MAX))
-
-        for attempt in range(_OP_RETRIES + 1):
-            try:
-                result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
-                self.logger.info(f"exec rc={result.return_code} cmd={full_cmd}")
-                return ExecResult(
-                    stdout=result.stdout, stderr=None, return_code=result.return_code
-                )
-            except Exception as exc:
-                if attempt < _OP_RETRIES:
-                    self.logger.warning(
-                        "exec retry %d/%d: %s: %s",
-                        attempt + 1, _OP_RETRIES, type(exc).__name__, exc,
-                    )
-                    await asyncio.sleep(_OP_RETRY_DELAY)
-                    continue
-                raise
-
-        raise RuntimeError("exec: unreachable")
+        result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
+        self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd}")
+        return ExecResult(
+            stdout=result.stdout, stderr=None, return_code=result.return_code
+        )
 
     async def upload_file(
         self,
         source_path: Path | str,
         target_path: str,
     ) -> None:
-        for attempt in range(_OP_RETRIES + 1):
-            try:
-                await self.sandbox.upload(str(source_path), self._remap(target_path))
-                return
-            except Exception as exc:
-                if attempt < _OP_RETRIES:
-                    self.logger.warning(
-                        "upload_file retry %d/%d (%s): %s",
-                        attempt + 1, _OP_RETRIES, target_path, exc,
-                    )
-                    await asyncio.sleep(_OP_RETRY_DELAY)
-                    continue
-                raise
+        await self.sandbox.upload(str(source_path), self._remap(target_path))
 
     async def upload_dir(
         self,
         source_dir: Path | str,
         target_dir: str,
     ) -> None:
-        for attempt in range(_OP_RETRIES + 1):
-            try:
-                await self.sandbox.upload_dir(
-                    str(source_dir), self._remap(target_dir)
-                )
-                return
-            except Exception as exc:
-                if attempt < _OP_RETRIES:
-                    self.logger.warning(
-                        "upload_dir retry %d/%d (%s): %s",
-                        attempt + 1, _OP_RETRIES, target_dir, exc,
-                    )
-                    await asyncio.sleep(_OP_RETRY_DELAY)
-                    continue
-                raise
+        await self.sandbox.upload_dir(str(source_dir), self._remap(target_dir))
 
     async def download_file(
         self,
         source_path: str,
         target_path: Path | str,
     ) -> None:
-        for attempt in range(_OP_RETRIES + 1):
-            try:
-                await self.sandbox.download_file(
-                    self._remap(source_path), str(target_path)
-                )
-                return
-            except Exception as exc:
-                if attempt < _OP_RETRIES:
-                    self.logger.warning(
-                        "download_file retry %d/%d (%s): %s",
-                        attempt + 1, _OP_RETRIES, source_path, exc,
-                    )
-                    await asyncio.sleep(_OP_RETRY_DELAY)
-                    continue
-                raise
+        await self.sandbox.download_file(self._remap(source_path), str(target_path))
 
     async def download_dir(
         self,
         source_dir: str,
         target_dir: Path | str,
     ) -> None:
-        for attempt in range(_OP_RETRIES + 1):
-            try:
-                await self.sandbox.download_dir(
-                    self._remap(source_dir), str(target_dir)
-                )
-                return
-            except Exception as exc:
-                if attempt < _OP_RETRIES:
-                    self.logger.warning(
-                        "download_dir retry %d/%d (%s): %s",
-                        attempt + 1, _OP_RETRIES, source_dir, exc,
-                    )
-                    await asyncio.sleep(_OP_RETRY_DELAY)
-                    continue
-                raise
+        await self.sandbox.download_dir(self._remap(source_dir), str(target_dir))

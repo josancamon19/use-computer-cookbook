@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-harbor = { git = "https://github.com/harbor-framework/harbor.git", branch = "main" }
+harbor = { git = "https://github.com/Mascobot/harbor.git", branch = "main" }
 mmini = { path = "../sdk", editable = true }
 
 [build-system]
