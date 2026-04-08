@@ -5,7 +5,7 @@ dist/
 *.egg-info/
 datasets/
 jobs/
-macosworld/
+macosworld/tasks/
 .env
 .DS_Store
 .vincent

@@ -32,21 +32,11 @@ class AnthropicCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
-        # --- Lume smoke-test: screenshot + early return (comment out to run normally) ---
-        import asyncio as _aio
-        for _attempt in range(4):
-            try:
-                ss = await sandbox.screenshot.take_full_screen()
-                break
-            except Exception as _e:
-                if _attempt == 3:
-                    raise
-                self.logger.warning("screenshot retry %d/3: %s", _attempt + 1, _e)
-                await _aio.sleep(3)
-        (self.images_dir / "step_000.png").write_bytes(ss)
-        self.logger.info(f"Screenshot saved to {self.images_dir / 'step_000.png'}")
+        ss = await sandbox.screenshot.take_full_screen()
+        await sandbox.mouse.click(960, 540)
+        result = await sandbox.exec_ssh("echo hello world")
+        print(f"[debug] screenshot={len(ss)} bytes, exec={result}")
         return
-        # --- end smoke-test ---
         self.steps[0]["message"] = instruction
 
         client = anthropic.Anthropic()
