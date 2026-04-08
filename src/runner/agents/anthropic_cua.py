@@ -14,6 +14,7 @@ from PIL import Image
 
 from runner.agents.base_cua import (
     BaseCUAAgent,
+    _retry_screenshot,
     build_system_prompt,
     execute_action,
     load_prompt,
@@ -32,11 +33,6 @@ class AnthropicCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
-        ss = await sandbox.screenshot.take_full_screen()
-        await sandbox.mouse.click(960, 540)
-        result = await sandbox.exec_ssh("echo hello world")
-        print(f"[debug] screenshot={len(ss)} bytes, exec={result}")
-        return
         self.steps[0]["message"] = instruction
 
         client = anthropic.Anthropic()
@@ -79,7 +75,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
             return buf.getvalue()
 
         # Initial screenshot
-        ss = await sandbox.screenshot.take_full_screen()
+        ss = await _retry_screenshot(sandbox)
         (self.images_dir / "step_000.png").write_bytes(ss)
 
         messages: list[dict[str, Any]] = [

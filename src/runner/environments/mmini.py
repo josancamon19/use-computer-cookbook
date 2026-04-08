@@ -34,7 +34,7 @@ from harbor.models.trial.paths import TrialPaths
 from mmini.client import AsyncMmini
 from mmini.sandbox import AsyncMacOSSandbox
 
-_OP_RETRIES = 0
+_OP_RETRIES = 1
 _OP_RETRY_DELAY = 2.0
 _EXEC_JITTER_MAX = 3.0
 
