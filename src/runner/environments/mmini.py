@@ -290,10 +290,17 @@ class MminiEnvironment(BaseEnvironment):
         on the VM.  This wrapper ensures the process tree is killed after
         ``timeout`` seconds using perl's alarm(), which is always available
         on macOS.
+
+        A default reward file (score 0) is pre-created so that if the
+        alarm kills a verifier test.sh before it writes its own reward,
+        Harbor still finds a valid file instead of RewardFileNotFoundError.
         """
         kill_after = max(timeout - 2, 5)
         escaped = cmd.replace("'", "'\\''")
-        return f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
+        return (
+            "echo 0 > /tmp/harbor/logs/verifier/reward.txt 2>/dev/null; "
+            f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
+        )
 
     async def exec(
         self,
