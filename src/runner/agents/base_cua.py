@@ -8,7 +8,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import httpx
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
@@ -43,24 +42,6 @@ def _normalize_key(key: str) -> str:
     if "+" in key:
         return "+".join(_KEY_ALIASES.get(k, k) for k in key.split("+"))
     return _KEY_ALIASES.get(key, key)
-
-
-_TRANSIENT = (httpx.ReadError, httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError)
-_SCREENSHOT_RETRIES = 3
-_SCREENSHOT_RETRY_DELAY = 2.0
-
-
-async def _retry_screenshot(sandbox: AsyncMacOSSandbox, retries: int = _SCREENSHOT_RETRIES) -> bytes:
-    """Take a full screenshot with retry on transient network errors."""
-    for attempt in range(retries + 1):
-        try:
-            return await sandbox.screenshot.take_full_screen()
-        except _TRANSIENT:
-            if attempt < retries:
-                await asyncio.sleep(_SCREENSHOT_RETRY_DELAY)
-                continue
-            raise
-    raise RuntimeError("unreachable")
 
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -116,62 +97,59 @@ async def execute_action(
     img_name = f"step_{step_idx:03d}.png"
 
     if action_type == "screenshot":
-        ss = await _retry_screenshot(sandbox)
+        ss = await sandbox.screenshot.take_full_screen()
         (images_dir / img_name).write_bytes(ss)
         return "Screenshot taken", ss, f"images/{img_name}"
 
-    try:
-        if action_type in ("left_click", "click"):
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.click(coord[0], coord[1], button="left")
-        elif action_type == "right_click":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.click(coord[0], coord[1], button="right")
-        elif action_type == "double_click":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.click(coord[0], coord[1], button="left", double=True)
-        elif action_type == "triple_click":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.click(coord[0], coord[1], button="left", double=True)
-            await asyncio.sleep(0.05)
-            await sandbox.mouse.click(coord[0], coord[1], button="left")
-        elif action_type == "middle_click":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.click(coord[0], coord[1], button="middle")
-        elif action_type == "type":
-            await sandbox.keyboard.type(action.get("text", ""))
-        elif action_type == "key":
-            key = _normalize_key(action.get("key", "") or action.get("text", ""))
-            if "+" in key:
-                await sandbox.keyboard.hotkey(key)
-            else:
-                await sandbox.keyboard.press(key)
-        elif action_type == "scroll":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.scroll(
-                coord[0],
-                coord[1],
-                action.get("direction", "down"),
-                action.get("amount", 3),
-            )
-        elif action_type == "move":
-            coord = action.get("coordinate", [0, 0])
-            await sandbox.mouse.move(coord[0], coord[1])
-        elif action_type == "drag":
-            start = action.get("start_coordinate", [0, 0])
-            end = action.get("coordinate", [0, 0])
-            await sandbox.mouse.drag(start[0], start[1], end[0], end[1])
-        elif action_type == "wait":
-            await asyncio.sleep(action.get("duration", 1))
+    if action_type in ("left_click", "click"):
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.click(coord[0], coord[1], button="left")
+    elif action_type == "right_click":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.click(coord[0], coord[1], button="right")
+    elif action_type == "double_click":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.click(coord[0], coord[1], button="left", double=True)
+    elif action_type == "triple_click":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.click(coord[0], coord[1], button="left", double=True)
+        await asyncio.sleep(0.05)
+        await sandbox.mouse.click(coord[0], coord[1], button="left")
+    elif action_type == "middle_click":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.click(coord[0], coord[1], button="middle")
+    elif action_type == "type":
+        await sandbox.keyboard.type(action.get("text", ""))
+    elif action_type == "key":
+        key = _normalize_key(action.get("key", "") or action.get("text", ""))
+        if "+" in key:
+            await sandbox.keyboard.hotkey(key)
         else:
-            return f"Unknown action: {action_type}", None, None
+            await sandbox.keyboard.press(key)
+    elif action_type == "scroll":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.scroll(
+            coord[0],
+            coord[1],
+            action.get("direction", "down"),
+            action.get("amount", 3),
+        )
+    elif action_type == "move":
+        coord = action.get("coordinate", [0, 0])
+        await sandbox.mouse.move(coord[0], coord[1])
+    elif action_type == "drag":
+        start = action.get("start_coordinate", [0, 0])
+        end = action.get("coordinate", [0, 0])
+        await sandbox.mouse.drag(start[0], start[1], end[0], end[1])
+    elif action_type == "wait":
+        await asyncio.sleep(action.get("duration", 1))
+    else:
+        return f"Unknown action: {action_type}", None, None
 
-        await asyncio.sleep(2)
-        ss = await _retry_screenshot(sandbox)
-        (images_dir / img_name).write_bytes(ss)
-        return f"Action '{action_type}' executed", ss, f"images/{img_name}"
-    except _TRANSIENT as e:
-        return f"Action '{action_type}' failed: {type(e).__name__}: {e}", None, None
+    await asyncio.sleep(2)
+    ss = await sandbox.screenshot.take_full_screen()
+    (images_dir / img_name).write_bytes(ss)
+    return f"Action '{action_type}' executed", ss, f"images/{img_name}"
 
 
 def _resolve_task_dir(logs_dir: Path) -> Path | None:
