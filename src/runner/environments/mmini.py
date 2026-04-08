@@ -34,7 +34,7 @@ from harbor.models.trial.paths import TrialPaths
 from mmini.client import AsyncMmini
 from mmini.sandbox import AsyncMacOSSandbox
 
-_OP_RETRIES = 1
+_OP_RETRIES = 0
 _OP_RETRY_DELAY = 2.0
 _EXEC_JITTER_MAX = 3.0
 
@@ -280,6 +280,21 @@ class MminiEnvironment(BaseEnvironment):
             return self._WORKSPACE_DIR
         return path
 
+    @staticmethod
+    def _wrap_with_timeout(cmd: str, timeout: int) -> str:
+        """Wrap a command with a VM-side process kill timer.
+
+        macOS osascript (and similar) can hang indefinitely when an app
+        shows a dialog or the accessibility framework stalls.  The HTTP
+        timeout only disconnects the *client* — the process keeps running
+        on the VM.  This wrapper ensures the process tree is killed after
+        ``timeout`` seconds using perl's alarm(), which is always available
+        on macOS.
+        """
+        kill_after = max(timeout - 2, 5)
+        escaped = cmd.replace("'", "'\\''")
+        return f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
+
     async def exec(
         self,
         command: str,
@@ -307,7 +322,8 @@ class MminiEnvironment(BaseEnvironment):
         parts.append(remapped_cmd)
         full_cmd = " ".join(parts)
 
-        timeout = timeout_sec or 60
+        timeout = timeout_sec or 30
+        full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
         await asyncio.sleep(random.uniform(0, _EXEC_JITTER_MAX))
 
