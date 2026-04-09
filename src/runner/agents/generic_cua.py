@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -28,12 +29,20 @@ class GenericCUAAgent(BaseCUAAgent):
         prompt_template: str = "pyautogui.txt",
         llm_backend: str = "litellm",
         max_tokens: int = 4096,
+        api_key: str | None = None,
+        api_base: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
         self._prompt_template = load_prompt(prompt_template)
         self._llm_backend = llm_backend
         self._max_tokens = max_tokens
+        # If api_base points at Fireworks, fall back to FIREWORKS_API_KEY env var.
+        # litellm with openai/* prefix would otherwise look for OPENAI_API_KEY.
+        if api_key is None and api_base and "fireworks" in api_base:
+            api_key = os.environ.get("FIREWORKS_API_KEY")
+        self._api_key = api_key
+        self._api_base = api_base
         self._tinker_llm = None
 
     @staticmethod
@@ -48,7 +57,12 @@ class GenericCUAAgent(BaseCUAAgent):
             return self._litellm_completion(model, messages, max_tokens)
 
     def _litellm_completion(self, model: str, messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
-        response = litellm.completion(model=model, messages=messages, max_tokens=max_tokens)
+        kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+        if self._api_base:
+            kwargs["api_base"] = self._api_base
+        response = litellm.completion(**kwargs)
         text = response.choices[0].message.content or ""
         usage = response.usage
         return text, usage.prompt_tokens or 0, usage.completion_tokens or 0

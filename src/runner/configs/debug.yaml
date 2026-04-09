@@ -18,6 +18,16 @@ agents:
     #   model_name: "debug"
     #   kwargs:
     #       max_steps: 1
+    #
+    # Kimi K2.5 via Fireworks (OpenAI-compatible). Requires:
+    #   export FIREWORKS_API_KEY=fw_...
+    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
+    #       # api_key picked up from FIREWORKS_API_KEY env var by litellm
 datasets:
     - path: datasets/macosworld_ready
       # 22 tasks with no osascript in pre_command.sh or test.sh
