@@ -132,6 +132,8 @@ class MminiEnvironment(BaseEnvironment):
         self._vm_ip = self._sandbox.vm_ip
         self.logger.info(f"sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
 
+        await self.sandbox.start_keepalive(interval=30)
+
         await self.sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
