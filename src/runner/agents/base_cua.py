@@ -255,23 +255,30 @@ class BaseCUAAgent(BaseAgent):
         context.n_input_tokens = self.total_in
         context.n_output_tokens = self.total_out
 
+    # TODO: recordings disabled — the computer-server encodes video on-demand
+    # during download, taking 5+ minutes for a 30s recording. This causes the
+    # idle reaper to kill the sandbox before the verifier runs. httpx stream
+    # timeout doesn't help because data trickles in slowly (per-read timeout
+    # resets on each chunk). Fix: pre-encode at stop time, or stream raw file.
     async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:
-        try:
-            result = await sandbox.recording.start(name="trial")
-            self._recording_id = result.id
-            self.logger.info(f"Recording started: {self._recording_id}")
-        except Exception as e:
-            self.logger.warning(f"Failed to start recording: {e}")
+        pass
+        # try:
+        #     result = await sandbox.recording.start(name="trial")
+        #     self._recording_id = result.id
+        #     self.logger.info(f"Recording started: {self._recording_id}")
+        # except Exception as e:
+        #     self.logger.warning(f"Failed to start recording: {e}")
 
     async def stop_recording(self, sandbox: AsyncMacOSSandbox) -> None:
-        if not self._recording_id:
-            return
-        try:
-            await sandbox.recording.stop(self._recording_id)
-            self.logger.info(f"Recording stopped: {self._recording_id}")
-            await asyncio.sleep(2)
-            rec_path = str(self.logs_dir / "recording.mp4")
-            await sandbox.recording.download(self._recording_id, rec_path)
-            self.logger.info(f"Recording saved: {rec_path}")
-        except Exception as e:
-            self.logger.warning(f"Recording save failed: {e}")
+        pass
+        # if not self._recording_id:
+        #     return
+        # try:
+        #     await sandbox.recording.stop(self._recording_id)
+        #     self.logger.info(f"Recording stopped: {self._recording_id}")
+        #     await asyncio.sleep(2)
+        #     rec_path = str(self.logs_dir / "recording.mp4")
+        #     await sandbox.recording.download(self._recording_id, rec_path)
+        #     self.logger.info(f"Recording saved: {rec_path}")
+        # except Exception as e:
+        #     self.logger.warning(f"Recording save failed: {e}")
