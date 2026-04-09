@@ -308,7 +308,10 @@ class MminiEnvironment(BaseEnvironment):
         full_cmd = " ".join(parts)
 
         timeout = timeout_sec or 30
-        full_cmd = self._wrap_with_timeout(full_cmd, timeout)
+
+        # Only wrap verifier scripts with perl alarm to kill hung osascript
+        if "test.sh" in full_cmd:
+            full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
         result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
         self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd}")
