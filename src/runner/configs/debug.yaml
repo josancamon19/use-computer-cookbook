@@ -2,7 +2,7 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 24
+    n_concurrent_trials: 30
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -20,52 +20,27 @@ agents:
     #       max_steps: 1
 datasets:
     - path: datasets/macosworld_ready
+      # 22 tasks with no osascript in pre_command.sh or test.sh
       task_names:
-          - "file_management__24903bd5*"
           - "safety__125631b5*"
           - "safety__4aace890*"
-          - "safety__61f8753f*"
-          - "safety__8c67c0bd*"
-          - "safety__8f9f1a55*"
-          - "safety__ba242ccf*"
           - "safety__c4964f3f*"
-          - "safety__de2ce6d7*"
           - "sys_and_interface__160a4bec*"
-          - "sys_and_interface__1dac89be*"
           - "sys_and_interface__23c1acf7*"
           - "sys_and_interface__26a55524*"
           - "sys_and_interface__41b86cc9*"
           - "sys_and_interface__4fe1e644*"
-          - "sys_and_interface__5a6b33d6*"
-          - "sys_and_interface__6500f659*"
-          - "sys_and_interface__670cda14*"
-          - "sys_and_interface__dacf1d33*"
-          - "sys_apps__07709761*"
-          - "sys_apps__0cbfcae1*"
-          - "sys_apps__0e224b29*"
           - "sys_apps__12fea1c8*"
-          - "sys_apps__1329d65e*"
           - "sys_apps__152a753b*"
-          - "sys_apps__1e31f3ee*"
-          - "sys_apps__1ef109cd*"
           - "sys_apps__259bcb80*"
           - "sys_apps__2c65e37b*"
-          - "sys_apps__5024b5cb*"
-          - "sys_apps__523621a6*"
-          - "sys_apps__543cf125*"
           - "sys_apps__595554cf*"
           - "sys_apps__6a3522ba*"
-          - "sys_apps__6ddeb5ae*"
           - "sys_apps__858e1ef5*"
           - "sys_apps__878dd2c5*"
-          - "sys_apps__96786064*"
           - "sys_apps__9f0d7200*"
           - "sys_apps__bab3960d*"
           - "sys_apps__bdbe892c*"
-          - "sys_apps__cb187818*"
           - "sys_apps__d516fdbf*"
           - "sys_apps__dbfb0512*"
           - "sys_apps__e88568e7*"
-          - "sys_apps__ea12a7de*"
-          - "sys_apps__eef70218*"
-          - "sys_apps__ff9779d1*"

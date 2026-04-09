@@ -256,10 +256,11 @@ class BaseCUAAgent(BaseAgent):
         context.n_output_tokens = self.total_out
 
     # TODO: recordings disabled — the computer-server encodes video on-demand
-    # during download, taking 5+ minutes for a 30s recording. This causes the
+    # during download, taking 5+ minutes for a recording. This causes the
     # idle reaper to kill the sandbox before the verifier runs. httpx stream
     # timeout doesn't help because data trickles in slowly (per-read timeout
     # resets on each chunk). Fix: pre-encode at stop time, or stream raw file.
+    # # - we can either avoid this from the gateway killer or make video retrieving much faster?
     async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:
         pass
         # try:
