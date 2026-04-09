@@ -93,12 +93,18 @@ async def execute_action(
     Returns (result_text, screenshot_bytes, screenshot_path).
     screenshot_path is relative to agent dir (e.g. "images/step_001.png").
     """
+    import logging as _logging
+    import time as _time
+    _log = _logging.getLogger("mmini.agent")
+
     action_type = action.get("action", "")
     img_name = f"step_{step_idx:03d}.png"
+    _t0 = _time.monotonic()
 
     if action_type == "screenshot":
         ss = await sandbox.screenshot.take_full_screen()
         (images_dir / img_name).write_bytes(ss)
+        _log.info(f"action screenshot: {_time.monotonic()-_t0:.2f}s, {len(ss)} bytes")
         return "Screenshot taken", ss, f"images/{img_name}"
 
     if action_type in ("left_click", "click"):
@@ -146,9 +152,12 @@ async def execute_action(
     else:
         return f"Unknown action: {action_type}", None, None
 
+    _action_elapsed = _time.monotonic() - _t0
     await asyncio.sleep(2)
     ss = await sandbox.screenshot.take_full_screen()
     (images_dir / img_name).write_bytes(ss)
+    _total_elapsed = _time.monotonic() - _t0
+    _log.info(f"action {action_type}: {_action_elapsed:.2f}s + screenshot {_total_elapsed-_action_elapsed:.2f}s = {_total_elapsed:.2f}s total")
     return f"Action '{action_type}' executed", ss, f"images/{img_name}"
 
 

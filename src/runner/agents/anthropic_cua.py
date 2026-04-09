@@ -96,14 +96,23 @@ class AnthropicCUAAgent(BaseCUAAgent):
         for step_idx in range(self.max_steps):
             _truncate_old_screenshots(messages, keep=5)
 
-            response = client.beta.messages.create(
-                model=model,
-                max_tokens=4096,
-                system=system,
-                tools=[computer_tool],  # type: ignore
-                messages=messages,  # type: ignore
-                betas=[beta],
-            )
+            self.logger.info(f"step {step_idx+1}/{self.max_steps}: calling Anthropic API...")
+            import time as _time
+            _api_start = _time.monotonic()
+            try:
+                response = client.beta.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=system,
+                    tools=[computer_tool],  # type: ignore
+                    messages=messages,  # type: ignore
+                    betas=[beta],
+                )
+            except Exception as e:
+                self.logger.error(f"step {step_idx+1}: Anthropic API error after {_time.monotonic()-_api_start:.1f}s: {type(e).__name__}: {e}")
+                raise
+            _api_elapsed = _time.monotonic() - _api_start
+            self.logger.info(f"step {step_idx+1}: API responded in {_api_elapsed:.1f}s, in={response.usage.input_tokens} out={response.usage.output_tokens}, stop={response.stop_reason}")
 
             self.total_in += response.usage.input_tokens
             self.total_out += response.usage.output_tokens
