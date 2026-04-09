@@ -119,11 +119,15 @@ class GenericCUAAgent(BaseCUAAgent):
         sy = self.screen_height / api_h
 
         def _resize_for_api(png_bytes: bytes) -> bytes:
+            """Resize and re-encode as JPEG q80. JPEG is ~17x smaller than PNG
+            for screenshots and vision models read it identically. Fireworks
+            rejected even single 1280x800 PNGs (~1.4MB b64) as 'Payload Too
+            Large'; JPEG keeps the full sliding history under 1MB total."""
             img = Image.open(io.BytesIO(png_bytes))
             if img.size != (api_w, api_h):
                 img = img.resize((api_w, api_h), Image.LANCZOS)
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
+            img.convert("RGB").save(buf, format="JPEG", quality=80)
             return buf.getvalue()
 
         def _scale_action(a: dict[str, Any]) -> dict[str, Any]:
@@ -158,7 +162,7 @@ class GenericCUAAgent(BaseCUAAgent):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{ss_b64}"}},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{ss_b64}"}},
                         {"type": "text", "text": user_text},
                     ],
                 }
