@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import litellm
-from PIL import Image
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from PIL import Image
 
 from runner.agents.base_cua import (
     BaseCUAAgent,
@@ -110,11 +110,13 @@ class GenericCUAAgent(BaseCUAAgent):
 
         model = self.model_name or "openai/gpt-4o"
 
-        # Resize screenshots before sending to the LLM. Full 1920×1080 PNGs are
-        # ~1.5MB each, and a sliding history of 6 messages can blow past API
-        # payload limits (Fireworks returned "Payload Too Large" with full-size).
-        # 1280×800 is what anthropic_cua uses and is large enough for vision.
+        # The model sees a 1280x800 image (resized from VM's 1920x1080) so the
+        # prompt MUST tell it the screen is 1280x800 — otherwise the model emits
+        # coords for the wrong space. We then scale model coords back to VM
+        # pixel space before clicking. (Mirrors anthropic_cua.)
         api_w, api_h = 1280, 800
+        sx = self.screen_width / api_w
+        sy = self.screen_height / api_h
 
         def _resize_for_api(png_bytes: bytes) -> bytes:
             img = Image.open(io.BytesIO(png_bytes))
@@ -123,6 +125,13 @@ class GenericCUAAgent(BaseCUAAgent):
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
+
+        def _scale_action(a: dict[str, Any]) -> dict[str, Any]:
+            """Scale a parsed action's coordinates from API space (1280x800) to VM space."""
+            for field in ("coordinate", "start_coordinate"):
+                if field in a and isinstance(a[field], list) and len(a[field]) == 2:
+                    a[field] = [int(a[field][0] * sx), int(a[field][1] * sy)]
+            return a
 
         ss = await sandbox.screenshot.take_full_screen()
         (self.images_dir / "step_000.png").write_bytes(ss)
@@ -134,8 +143,8 @@ class GenericCUAAgent(BaseCUAAgent):
         for step_idx in range(self.max_steps):
             system = build_system_prompt(
                 self._prompt_template,
-                self.screen_width,
-                self.screen_height,
+                api_w,
+                api_h,
                 instruction=instruction,
                 step=step_idx + 1,
                 max_steps=self.max_steps,
@@ -187,7 +196,10 @@ class GenericCUAAgent(BaseCUAAgent):
                 continue
 
             all_code = "\n".join(code_blocks)
-            actions = _parse_pyautogui(all_code, self.screen_width, self.screen_height)
+            # Parse using API dims (1280x800) — the model thinks that's the screen.
+            # Then scale each coordinate up to VM pixel space.
+            actions = _parse_pyautogui(all_code, api_w, api_h)
+            actions = [_scale_action(a) for a in actions]
 
             last_ss_path: str | None = None
             for action in actions:
@@ -261,25 +273,28 @@ def _parse_int(s: str) -> int:
             return 0
 
 
+_MODIFIER_KEYS = {"ctrl", "control", "alt", "option", "shift", "cmd", "command", "win", "super", "meta"}
+
+
 def _parse_pyautogui(code: str, screen_w: int = 1920, screen_h: int = 1080) -> list[dict[str, Any]]:
     """Parse pyautogui code into action dicts."""
     actions: list[dict[str, Any]] = []
+    held_mods: list[str] = []  # ordered list of held modifier keys for keyDown/keyUp pairs
 
     for line in code.strip().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
 
-        if "pyautogui.click(" in line:
+        if "pyautogui.tripleClick(" in line:
             args = _args(line)
             if len(args) >= 2:
-                a: dict[str, Any] = {
-                    "action": "click",
-                    "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
-                }
-                if "'right'" in line or '"right"' in line:
-                    a["action"] = "right_click"
-                actions.append(a)
+                actions.append(
+                    {
+                        "action": "triple_click",
+                        "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
+                    }
+                )
 
         elif "pyautogui.doubleClick(" in line:
             args = _args(line)
@@ -290,6 +305,17 @@ def _parse_pyautogui(code: str, screen_w: int = 1920, screen_h: int = 1080) -> l
                         "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
                     }
                 )
+
+        elif "pyautogui.click(" in line:
+            args = _args(line)
+            if len(args) >= 2:
+                a: dict[str, Any] = {
+                    "action": "click",
+                    "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
+                }
+                if "'right'" in line or '"right"' in line:
+                    a["action"] = "right_click"
+                actions.append(a)
 
         elif "pyautogui.moveTo(" in line:
             args = _args(line)
@@ -330,6 +356,22 @@ def _parse_pyautogui(code: str, screen_w: int = 1920, screen_h: int = 1080) -> l
             if keys:
                 actions.append({"action": "key", "key": "+".join(keys)})
 
+        elif "pyautogui.keyDown(" in line:
+            key = _str_arg(line)
+            if key:
+                if key.lower() in _MODIFIER_KEYS:
+                    held_mods.append(key)
+                else:
+                    # non-modifier key — fire it now combined with any held mods
+                    combo = "+".join(held_mods + [key])
+                    actions.append({"action": "key", "key": combo})
+
+        elif "pyautogui.keyUp(" in line:
+            key = _str_arg(line)
+            if key and key in held_mods:
+                held_mods.remove(key)
+            # otherwise: partner of an already-emitted keyDown, ignore
+
         elif "pyautogui.drag(" in line:
             args = _args(line)
             if len(args) >= 2:
@@ -342,10 +384,14 @@ def _parse_pyautogui(code: str, screen_w: int = 1920, screen_h: int = 1080) -> l
                     }
                 )
 
-        elif "time.sleep(" in line:
+        elif "time.sleep(" in line or "pyautogui.sleep(" in line:
             args = _args(line)
             if args:
-                actions.append({"action": "wait", "duration": float(args[0])})
+                try:
+                    duration = float(args[0])
+                except ValueError:
+                    duration = 1.0
+                actions.append({"action": "wait", "duration": duration})
 
     return actions
 
@@ -366,9 +412,34 @@ def _args(line: str) -> list[str]:
 
 
 def _str_arg(line: str) -> str:
-    m = re.search(r"""['"](.*?)['"]""", line)
-    return m.group(1) if m else ""
+    """Extract first string literal. Handles ''' """ + '"""' + """, ''', ", '."""
+    # triple-quoted forms first (longer match wins)
+    m = re.search(r'"""(.*?)"""', line, re.DOTALL)
+    if m:
+        return m.group(1)
+    m = re.search(r"'''(.*?)'''", line, re.DOTALL)
+    if m:
+        return m.group(1)
+    m = re.search(r'"([^"]*)"', line)
+    if m:
+        return m.group(1)
+    m = re.search(r"'([^']*)'", line)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def _str_args(line: str) -> list[str]:
-    return re.findall(r"""['"]([^'"]+)['"]""", line)
+    """Extract all string literals. Handles triple-quoted and single-quoted forms."""
+    out: list[str] = []
+    # Strip triple-quoted matches first so they don't get double-counted
+    remaining = line
+    for pat in (r'"""(.*?)"""', r"'''(.*?)'''"):
+        for m in re.finditer(pat, remaining, re.DOTALL):
+            out.append(m.group(1))
+        remaining = re.sub(pat, "", remaining, flags=re.DOTALL)
+    for m in re.finditer(r'"([^"]*)"', remaining):
+        out.append(m.group(1))
+    for m in re.finditer(r"'([^']*)'", remaining):
+        out.append(m.group(1))
+    return out
