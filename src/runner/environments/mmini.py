@@ -140,7 +140,8 @@ class MminiEnvironment(BaseEnvironment):
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace && "
-            "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin"
+            "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin && "
+            "echo 0 > /tmp/harbor/logs/verifier/reward.txt"
         )
         await self._setup_task()
 
@@ -274,16 +275,10 @@ class MminiEnvironment(BaseEnvironment):
         ``timeout`` seconds using perl's alarm(), which is always available
         on macOS.
 
-        A default reward file (score 0) is pre-created so that if the
-        alarm kills a verifier test.sh before it writes its own reward,
-        Harbor still finds a valid file instead of RewardFileNotFoundError.
         """
         kill_after = max(timeout - 2, 5)
         escaped = cmd.replace("'", "'\\''")
-        return (
-            "echo 0 > /tmp/harbor/logs/verifier/reward.txt 2>/dev/null; "
-            f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
-        )
+        return f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
 
     async def exec(
         self,
