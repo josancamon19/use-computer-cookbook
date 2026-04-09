@@ -98,7 +98,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
 
             self.logger.info(f"step {step_idx+1}/{self.max_steps}: calling Anthropic API...")
             import time as _time
-            _api_start = _time.monotonic()
+            _t0 = _time.monotonic()
             try:
                 response = client.beta.messages.create(
                     model=model,
@@ -109,10 +109,9 @@ class AnthropicCUAAgent(BaseCUAAgent):
                     betas=[beta],
                 )
             except Exception as e:
-                self.logger.error(f"step {step_idx+1}: Anthropic API error after {_time.monotonic()-_api_start:.1f}s: {type(e).__name__}: {e}")
+                self.logger.error(f"step {step_idx+1}: Anthropic API error after {_time.monotonic()-_t0:.1f}s: {type(e).__name__}: {e}")
                 raise
-            _api_elapsed = _time.monotonic() - _api_start
-            self.logger.info(f"step {step_idx+1}: API responded in {_api_elapsed:.1f}s, in={response.usage.input_tokens} out={response.usage.output_tokens}, stop={response.stop_reason}")
+            self.logger.info(f"step {step_idx+1}: API responded in {_time.monotonic()-_t0:.1f}s, in={response.usage.input_tokens} out={response.usage.output_tokens}, stop={response.stop_reason}")
 
             self.total_in += response.usage.input_tokens
             self.total_out += response.usage.output_tokens

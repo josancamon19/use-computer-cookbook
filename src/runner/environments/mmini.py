@@ -6,7 +6,19 @@ import logging
 import os
 import re
 import shlex
+import time
+from contextlib import contextmanager
 from pathlib import Path
+
+
+@contextmanager
+def _timer():
+    """Yields an object with .elapsed property (seconds since context entered)."""
+    class _T:
+        def __init__(self): self.start = time.monotonic()
+        @property
+        def elapsed(self): return time.monotonic() - self.start
+    yield _T()
 
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
@@ -114,10 +126,11 @@ class MminiEnvironment(BaseEnvironment):
             return
 
         self.logger.info("creating mmini sandbox...")
-        self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
+        with _timer() as t:
+            self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
         self._sandbox_id = self._sandbox.sandbox_id
         self._vm_ip = self._sandbox.vm_ip
-        self.logger.info(f"sandbox ready: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
+        self.logger.info(f"sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
 
         await self.sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
@@ -285,8 +298,12 @@ class MminiEnvironment(BaseEnvironment):
         # The right fix is server-side timeouts in lume's exec handler.
         full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
-        result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
-        self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd}")
+        with _timer() as t:
+            result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
+        if "test.sh" in full_cmd:
+            self.logger.info(f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
+        else:
+            self.logger.debug(f"exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
         return ExecResult(
             stdout=result.stdout, stderr=None, return_code=result.return_code
         )
