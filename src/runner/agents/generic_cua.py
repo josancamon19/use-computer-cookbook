@@ -171,7 +171,7 @@ class GenericCUAAgent(BaseCUAAgent):
                 continue
 
             all_code = "\n".join(code_blocks)
-            actions = _parse_pyautogui(all_code)
+            actions = _parse_pyautogui(all_code, self.screen_width, self.screen_height)
 
             last_ss_path: str | None = None
             for action in actions:
@@ -213,7 +213,39 @@ class GenericCUAAgent(BaseCUAAgent):
 # ── pyautogui parser ────────────────────────────────────────────────
 
 
-def _parse_pyautogui(code: str) -> list[dict[str, Any]]:
+def _parse_coord(s: str, dim: int) -> int:
+    """Parse a coordinate from a model-emitted string.
+
+    Tolerates floats (some models ignore "use integers" prompts) and
+    normalized [0, 1] floats (scaled to `dim`). Falls back to 0 on garbage.
+    """
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        f = float(s)
+    except ValueError:
+        return 0
+    # Normalized coordinate (0..1) — scale to screen dim. Use < 1 (not <= 1)
+    # so that "1" or "1.0" stays a literal pixel, not the right edge.
+    if 0.0 <= f < 1.0:
+        return int(f * dim)
+    return int(f)
+
+
+def _parse_int(s: str) -> int:
+    """Parse an int field that should not be scaled (e.g. scroll clicks, drag delta)."""
+    try:
+        return int(s)
+    except ValueError:
+        try:
+            return int(float(s))
+        except ValueError:
+            return 0
+
+
+def _parse_pyautogui(code: str, screen_w: int = 1920, screen_h: int = 1080) -> list[dict[str, Any]]:
     """Parse pyautogui code into action dicts."""
     actions: list[dict[str, Any]] = []
 
@@ -225,7 +257,10 @@ def _parse_pyautogui(code: str) -> list[dict[str, Any]]:
         if "pyautogui.click(" in line:
             args = _args(line)
             if len(args) >= 2:
-                a: dict[str, Any] = {"action": "click", "coordinate": [int(args[0]), int(args[1])]}
+                a: dict[str, Any] = {
+                    "action": "click",
+                    "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
+                }
                 if "'right'" in line or '"right"' in line:
                     a["action"] = "right_click"
                 actions.append(a)
@@ -233,18 +268,28 @@ def _parse_pyautogui(code: str) -> list[dict[str, Any]]:
         elif "pyautogui.doubleClick(" in line:
             args = _args(line)
             if len(args) >= 2:
-                actions.append({"action": "double_click", "coordinate": [int(args[0]), int(args[1])]})
+                actions.append(
+                    {
+                        "action": "double_click",
+                        "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
+                    }
+                )
 
         elif "pyautogui.moveTo(" in line:
             args = _args(line)
             if len(args) >= 2:
-                actions.append({"action": "move", "coordinate": [int(args[0]), int(args[1])]})
+                actions.append(
+                    {
+                        "action": "move",
+                        "coordinate": [_parse_coord(args[0], screen_w), _parse_coord(args[1], screen_h)],
+                    }
+                )
 
         elif "pyautogui.scroll(" in line:
             args = _args(line)
-            clicks = int(args[0]) if args else -3
-            x = int(args[1]) if len(args) > 1 else 0
-            y = int(args[2]) if len(args) > 2 else 0
+            clicks = _parse_int(args[0]) if args else -3
+            x = _parse_coord(args[1], screen_w) if len(args) > 1 else 0
+            y = _parse_coord(args[2], screen_h) if len(args) > 2 else 0
             actions.append(
                 {
                     "action": "scroll",
@@ -272,8 +317,13 @@ def _parse_pyautogui(code: str) -> list[dict[str, Any]]:
         elif "pyautogui.drag(" in line:
             args = _args(line)
             if len(args) >= 2:
+                # drag uses relative deltas, not absolute coordinates — don't normalize
                 actions.append(
-                    {"action": "drag", "start_coordinate": [0, 0], "coordinate": [int(args[0]), int(args[1])]}
+                    {
+                        "action": "drag",
+                        "start_coordinate": [0, 0],
+                        "coordinate": [_parse_int(args[0]), _parse_int(args[1])],
+                    }
                 )
 
         elif "time.sleep(" in line:
