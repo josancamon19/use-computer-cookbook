@@ -264,31 +264,44 @@ class BaseCUAAgent(BaseAgent):
         context.n_input_tokens = self.total_in
         context.n_output_tokens = self.total_out
 
-    # TODO: recordings disabled — the computer-server encodes video on-demand
-    # during download, taking 5+ minutes for a recording. This causes the
-    # idle reaper to kill the sandbox before the verifier runs. httpx stream
-    # timeout doesn't help because data trickles in slowly (per-read timeout
-    # resets on each chunk). Fix: pre-encode at stop time, or stream raw file.
-    # # - we can either avoid this from the gateway killer or make video retrieving much faster?
     async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:
-        pass
-        # try:
-        #     result = await sandbox.recording.start(name="trial")
-        #     self._recording_id = result.id
-        #     self.logger.info(f"Recording started: {self._recording_id}")
-        # except Exception as e:
-        #     self.logger.warning(f"Failed to start recording: {e}")
+        try:
+            result = await sandbox.recording.start(name="trial")
+            self._recording_id = result.id
+            self.logger.info(f"Recording started: {self._recording_id}")
+        except Exception as e:
+            self.logger.warning(f"Failed to start recording: {e}")
 
     async def stop_recording(self, sandbox: AsyncMacOSSandbox) -> None:
-        pass
-        # if not self._recording_id:
-        #     return
-        # try:
-        #     await sandbox.recording.stop(self._recording_id)
-        #     self.logger.info(f"Recording stopped: {self._recording_id}")
-        #     await asyncio.sleep(2)
-        #     rec_path = str(self.logs_dir / "recording.mp4")
-        #     await sandbox.recording.download(self._recording_id, rec_path)
-        #     self.logger.info(f"Recording saved: {rec_path}")
-        # except Exception as e:
-        #     self.logger.warning(f"Recording save failed: {e}")
+        if not self._recording_id:
+            return
+        try:
+            import time as _time
+
+            info = await sandbox.recording.stop(self._recording_id)
+            self.logger.info(
+                f"Recording stopped: id={self._recording_id} "
+                f"name={info.name!r} filename={info.filename!r} "
+                f"server_size={info.file_size}B "
+                f"({info.file_size / (1024 * 1024):.2f} MB)"
+            )
+
+            await asyncio.sleep(2)
+
+            rec_path = self.logs_dir / "recording.mp4"
+            self.logger.info(f"Downloading recording → {rec_path}")
+            t_dl = _time.monotonic()
+            await sandbox.recording.download(
+                self._recording_id, str(rec_path), timeout=180.0
+            )
+            dl_elapsed = _time.monotonic() - t_dl
+            local_size = rec_path.stat().st_size
+            self.logger.info(
+                f"Recording saved: {rec_path} "
+                f"local_size={local_size}B ({local_size / (1024 * 1024):.2f} MB) "
+                f"download_elapsed={dl_elapsed:.1f}s"
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Recording save failed: {type(e).__name__}: {e}"
+            )
