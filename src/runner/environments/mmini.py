@@ -60,6 +60,14 @@ class MminiEnvironment(BaseEnvironment):
         self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
         self._sandbox: AsyncMacOSSandbox | None = None
 
+        # Propagate SDK logs (mmini.*) into harbor's trial logger
+        # so retries and transient errors are visible in trial.log
+        sdk_logger = logging.getLogger("mmini")
+        if logger and not sdk_logger.handlers:
+            sdk_logger.setLevel(logging.DEBUG)
+            for handler in logger.handlers:
+                sdk_logger.addHandler(handler)
+
         super().__init__(
             environment_dir=environment_dir,
             environment_name=environment_name,
