@@ -9,12 +9,10 @@ from typing import Any
 import anthropic
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-
 from PIL import Image
 
 from runner.agents.base_cua import (
     BaseCUAAgent,
-    _retry_screenshot,
     build_system_prompt,
     execute_action,
     load_prompt,
@@ -75,7 +73,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
             return buf.getvalue()
 
         # Initial screenshot
-        ss = await _retry_screenshot(sandbox)
+        ss = await sandbox.screenshot.take_full_screen()
         (self.images_dir / "step_000.png").write_bytes(ss)
 
         messages: list[dict[str, Any]] = [
