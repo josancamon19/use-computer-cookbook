@@ -309,9 +309,9 @@ class MminiEnvironment(BaseEnvironment):
 
         timeout = timeout_sec or 30
 
-        # Only wrap verifier scripts with perl alarm to kill hung osascript
-        if "test.sh" in full_cmd:
-            full_cmd = self._wrap_with_timeout(full_cmd, timeout)
+        # TODO: ugly hack — perl alarm wraps all exec to kill hung osascript.
+        # The right fix is server-side timeouts in lume's exec handler.
+        full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
         result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
         self.logger.debug(f"exec rc={result.return_code} cmd={full_cmd}")
