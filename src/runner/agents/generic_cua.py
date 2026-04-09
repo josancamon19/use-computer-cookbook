@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 import litellm
+from PIL import Image
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -108,6 +110,20 @@ class GenericCUAAgent(BaseCUAAgent):
 
         model = self.model_name or "openai/gpt-4o"
 
+        # Resize screenshots before sending to the LLM. Full 1920×1080 PNGs are
+        # ~1.5MB each, and a sliding history of 6 messages can blow past API
+        # payload limits (Fireworks returned "Payload Too Large" with full-size).
+        # 1280×800 is what anthropic_cua uses and is large enough for vision.
+        api_w, api_h = 1280, 800
+
+        def _resize_for_api(png_bytes: bytes) -> bytes:
+            img = Image.open(io.BytesIO(png_bytes))
+            if img.size != (api_w, api_h):
+                img = img.resize((api_w, api_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+
         ss = await sandbox.screenshot.take_full_screen()
         (self.images_dir / "step_000.png").write_bytes(ss)
 
@@ -126,7 +142,7 @@ class GenericCUAAgent(BaseCUAAgent):
             )
             system += f"\n\nYou are on step {step_idx + 1} of {self.max_steps}. Act efficiently."
 
-            ss_b64 = base64.b64encode(ss).decode()
+            ss_b64 = base64.b64encode(_resize_for_api(ss)).decode()
             user_text = "Here is the current screenshot. Complete the task." if step_idx == 0 else "What's the next step?"
 
             history.append(
