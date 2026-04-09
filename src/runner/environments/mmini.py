@@ -1,21 +1,4 @@
-"""
-mmini environment — runs Harbor tasks on macOS VMs via the mmini gateway.
-
-Usage in job config:
-    environment:
-      import_path: "runner.environments.mmini:MminiEnvironment"
-      kwargs:
-        gateway_url: "http://localhost:8080"
-
-TODO: Some tasks score 1.0 without agent interaction because the VM's
-initial state already satisfies the grading condition (e.g. dark mode
-already enabled, Safari not in Dock). These false positives are tracked
-in adapter.py's _PRE_COMMAND_FIXES. Need to either:
-  - Fix the VM base image to match macOSWorld's expected initial state
-  - Add pre_commands that reset state before each task
-  - Filter these tasks out of evaluation runs
-See adapter.py docstring for the full list of affected task IDs.
-"""
+"""mmini environment — runs Harbor tasks on macOS VMs via the mmini gateway."""
 
 from __future__ import annotations
 
@@ -188,9 +171,7 @@ class MminiEnvironment(BaseEnvironment):
     _BENCHMARK_VM_DIR = "/Users/lume/Benchmark_Backup"
 
     async def _upload_benchmark_files(self, pre_command_text: str) -> None:
-        """Parse pre_command for Benchmark_Backup/ references and upload only needed files."""
-        # Extract top-level asset names from Benchmark_Backup/ references
-        # Handles quoted paths (spaces) and subpaths (BenchmarkApp/BenchmarkApp)
+        """Upload Benchmark_Backup files referenced by pre_command."""
         refs = set()
         # Quoted: "Benchmark_Backup/iMovie Library.imovielibrary"
         for m in re.finditer(r'"[^"]*Benchmark_Backup/([^"]+)"', pre_command_text):
@@ -266,16 +247,7 @@ class MminiEnvironment(BaseEnvironment):
 
     @staticmethod
     def _wrap_with_timeout(cmd: str, timeout: int) -> str:
-        """Wrap a command with a VM-side process kill timer.
-
-        macOS osascript (and similar) can hang indefinitely when an app
-        shows a dialog or the accessibility framework stalls.  The HTTP
-        timeout only disconnects the *client* — the process keeps running
-        on the VM.  This wrapper ensures the process tree is killed after
-        ``timeout`` seconds using perl's alarm(), which is always available
-        on macOS.
-
-        """
+        """Wrap command with perl alarm to kill hung processes on the VM."""
         kill_after = max(timeout - 2, 5)
         escaped = cmd.replace("'", "'\\''")
         return f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
