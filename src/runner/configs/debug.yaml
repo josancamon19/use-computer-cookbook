@@ -1,8 +1,8 @@
 jobs_dir: jobs
-n_attempts: 1
+n_attempts: 4
 orchestrator:
     type: local
-    n_concurrent_trials: 30
+    n_concurrent_trials: 72
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -24,6 +24,7 @@ agents:
           max_tokens: 4096
           api_base: "https://api.fireworks.ai/inference/v1"
           # api_key picked up from FIREWORKS_API_KEY env var by litellm
+          # anthropic is too slow, rate limits and expensive to test infra fast enough.
 datasets:
     - path: datasets/macosworld_ready
       # 22 tasks with no osascript in pre_command.sh or test.sh
