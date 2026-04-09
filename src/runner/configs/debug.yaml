@@ -1,8 +1,8 @@
 jobs_dir: jobs
-n_attempts: 4
+n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 72
+    n_concurrent_trials: 76
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
