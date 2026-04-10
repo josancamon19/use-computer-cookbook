@@ -181,8 +181,15 @@ class MminiEnvironment(BaseEnvironment):
                 if line.strip() and not line.startswith("#!") and not line.strip().startswith("#")
             ]
             for i, line in enumerate(lines):
-                self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
-                result = await self.exec(line)
+                # Transpile osascript AX patterns (e.g. keystroke) and route
+                # through exec_ax when needed — same as test.sh but per-line.
+                transpiled_line, n = transpile(line)
+                if n > 0:
+                    self.logger.info(f"pre_command [{i+1}/{len(lines)}] (transpiled {n}): {line[:80]}")
+                    result = await self._exec_ax(transpiled_line)
+                else:
+                    self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
+                    result = await self.exec(line)
                 if result.return_code != 0:
                     raise RuntimeError(
                         f"pre_command [{i+1}/{len(lines)}] failed "
@@ -328,13 +335,21 @@ class MminiEnvironment(BaseEnvironment):
                 result = await self.sandbox.exec_ax(full_cmd, timeout=timeout)
             else:
                 result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
-        if "test.sh" in full_cmd:
+        if "test.sh" in full_cmd or "_ax_" in full_cmd:
             self.logger.info(f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
         else:
             self.logger.debug(f"exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
         return ExecResult(
             stdout=result.stdout, stderr=None, return_code=result.return_code
         )
+
+    async def _exec_ax(self, command: str, timeout_sec: int = 30) -> ExecResult:
+        """Run a command via exec_ax (cua-server chain) for AX-needing calls."""
+        full_cmd = self._wrap_with_timeout(self._remap_str(command), timeout_sec)
+        with _timer() as t:
+            result = await self.sandbox.exec_ax(full_cmd, timeout=timeout_sec)
+        self.logger.debug(f"exec_ax rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
+        return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
 
     async def upload_file(
         self,

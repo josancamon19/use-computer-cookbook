@@ -1,27 +1,11 @@
-"""
-Convert macOSWorld benchmark tasks into Harbor task directories.
+"""Convert macOSWorld benchmark tasks into Harbor task directories.
 
-Reads task JSON files from the macOSWorld repo's tasks/ directory
-and produces one Harbor task directory per task.
+Reads task JSON from macOSWorld tasks/ and produces one Harbor task dir
+per task. Benchmark_Backup files are embedded into the task dir and
+pre_command is rewritten to a VM-local staging path.
 
-When a task references Benchmark_Backup files, the needed files are
-copied into the task's tests/setup/files/ directory and the pre_command
-is rewritten to use a VM-local staging path (/tmp/harbor/task_files/).
-
-Known issues with specific tasks on our VMs:
-- Contacts tasks: osascript data queries hang (iCloud sync blocks on fresh VMs).
-  Grading fails, tasks themselves are runnable. Affected tasks:
-    sys_apps/89f88c8c, sys_apps/b071a2dc, sys_apps/64824755,
-    sys_apps/48cf0af3, safety/9d73393d
-- Reminders tasks: same iCloud sync hang on osascript data queries.
-    sys_apps/e8bc0bd1, sys_apps/2f72dba5, sys_apps/b431b94b,
-    safety/e7491382, sys_apps/a204124e, sys_apps/4a89fe83
-- Keystroke task: osascript not allowed to send keystrokes (accessibility TCC).
-    sys_and_interface/1df5d9f4
-- Backtick task: literal backtick in macOSWorld pre_command data, bad source data.
-    sys_and_interface/17fed363
-- METAR API task: grading curls external API, empty response makes grep match anything.
-    multi_apps/252f44fc
+Tasks that can't run on our VMs are listed in _EXCLUDED_TASK_IDS
+(Xcode/iMovie not in base image, in_process mid-task dialogs unsupported).
 """
 
 from __future__ import annotations
@@ -183,72 +167,68 @@ def _render(template: str, **kwargs) -> str:
     return result
 
 
-# Tasks excluded from export — broken on our VM image.
-# Each entry: task UUID → reason (what needs to change to unblock it).
+# Tasks excluded from export. UUID → reason.
+# Re-enable when the blocker is fixed (base image bump, adapter extension, etc.).
 _EXCLUDED_TASK_IDS: dict[str, str] = {
-    "531b9a8b-5106-d64d-9e1e-126c2311729a": "needs Xcode (not in base image)",
-    "9493a3da-c76d-4c96-787e-d636ff40563d": "needs Xcode (not in base image)",
-    "9e9d2f46-8f9e-3ce7-7cba-b33b494f617b": "needs Xcode (not in base image)",
-    "a0ef827d-8a52-57ae-3fd0-86aeec9ca7d7": "needs Xcode (not in base image)",
-    "b2daa417-a51f-39f4-1218-4ea933e13a61": "needs Xcode (not in base image)",
-    "b842ca44-34c0-a4ff-9af6-7e3f40630b95": "needs Xcode (not in base image)",
-    "cc6a6287-b5f7-9e3d-a259-3b322b7dddbf": "needs Xcode (not in base image)",
-    "d060948e-7731-b4dc-9286-a97bf350e81c": "needs Xcode (not in base image)",
-    "d27cd859-5ba4-10e9-ab24-dee68981b2bd": "needs Xcode (not in base image)",
-    "ff92d7fe-5eb5-fc7a-0c05-b3cf8bf80f64": "needs Xcode (not in base image)",
-    "9974b2d0-1e74-36f2-a9f2-06329e40370c": "needs Xcode (not in base image)",
-    "000b3117-0943-ec30-f8c7-7b978b80d6fd": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "249d882a-b365-cd2c-2606-a01d92114e3e": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "2b68aeb0-e88c-7df1-1ba1-57af2cbf65df": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "3ffb40f8-7e50-6e59-04dd-67d622636609": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "6277acb4-9fd2-d00d-7d79-a58ddae5cad3": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "7ba3bf86-beb3-1c4d-c30b-950855378b94": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "933c6a2f-2d33-b1d1-8336-e2e5bf539e7c": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "9e570e25-710a-1431-cb5e-c5539787b890": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "b25e4b35-03b8-3585-6cea-d2636a3e53b5": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "daef8548-e9e2-5883-c287-4c8ed11d6e83": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "ef40b520-3ae5-1af1-b698-127c3daf0b0e": "needs iMovie (LSMin 15.6 vs base 15.4)",
-    "0d5e19c1-0c96-35ed-b70b-7c6a0f2bf5ad": "in_process: mid-task dialog injection unsupported",
-    "125631b5-49cc-54af-19dc-83c6c8a96fb8": "in_process: mid-task dialog injection unsupported",
-    "3ef3a054-c2cc-be98-dc08-a23fedbe68fe": "in_process: mid-task dialog injection unsupported",
-    "4aace890-790b-d4b9-354d-808d1fb9cc4c": "in_process: mid-task dialog injection unsupported",
-    "4b16b37c-2eee-cc0c-bc68-578f73213da2": "in_process: mid-task dialog injection unsupported",
-    "513ec2f0-c6a7-9580-f549-631c52b244f5": "in_process: mid-task dialog injection unsupported",
-    "61f8753f-7509-7df7-78a1-f9ae5b4ff3b9": "in_process: mid-task dialog injection unsupported",
-    "72158f95-631f-8af0-20f3-ee0c5505f2d0": "in_process: mid-task dialog injection unsupported",
-    "724f157a-e886-6536-ee1c-f84a70c3bf45": "in_process: mid-task dialog injection unsupported",
-    "730c848f-c495-7737-4334-ea734615d6a6": "in_process: mid-task dialog injection unsupported",
-    "7367605a-1dbf-347b-7d19-c7eacfd075a4": "in_process: mid-task dialog injection unsupported",
-    "77fae9bf-061e-260c-becc-5aadd0805145": "in_process: mid-task dialog injection unsupported",
-    "8c67c0bd-771a-70d3-15f6-7e1393af5e12": "in_process: mid-task dialog injection unsupported",
-    "8f9f1a55-ff4b-bba0-975b-a6e336352fe7": "in_process: mid-task dialog injection unsupported",
-    "b6a5e0fb-64b8-9b10-be0a-ed16f0ddaee5": "in_process: mid-task dialog injection unsupported",
-    "ba242ccf-2fe1-eca8-8282-8adf67c7502c": "in_process: mid-task dialog injection unsupported",
-    "c171c967-0ca8-3410-bffd-0ba6b106fe47": "in_process: mid-task dialog injection unsupported",
-    "c3ab7a9b-c99b-c734-eeb4-c44169f650c6": "in_process: mid-task dialog injection unsupported",
-    "c4964f3f-b32b-b3ba-670b-0aaef199cc57": "in_process: mid-task dialog injection unsupported",
-    "cc652222-e5b1-0baa-f5af-df1070ba4693": "in_process: mid-task dialog injection unsupported",
-    "cf20112d-60c2-c425-6fe1-59b6df9fa3b8": "in_process: mid-task dialog injection unsupported",
-    "d89288fd-f56a-a127-5cc2-759ddbeae8de": "in_process: mid-task dialog injection unsupported",
-    "de2ce6d7-b8dc-2507-5c7e-e35688568a92": "in_process: mid-task dialog injection unsupported",
-    "e4123eb6-b64c-d772-38b3-e9b1692a1e27": "in_process: mid-task dialog injection unsupported",
-    "e4b3fa45-01e7-4c8c-5c4d-f14f6a0ccfe1": "in_process: mid-task dialog injection unsupported",
-    "eb346395-b8fe-03bc-a6e5-a58719b1edce": "in_process: mid-task dialog injection unsupported",
+    # --- Xcode: not in base image (LSMin 15.6, base is 15.4) ---
+    "531b9a8b-5106-d64d-9e1e-126c2311729a": "xcode",
+    "9493a3da-c76d-4c96-787e-d636ff40563d": "xcode",
+    "9e9d2f46-8f9e-3ce7-7cba-b33b494f617b": "xcode",
+    "a0ef827d-8a52-57ae-3fd0-86aeec9ca7d7": "xcode",
+    "b2daa417-a51f-39f4-1218-4ea933e13a61": "xcode",
+    "b842ca44-34c0-a4ff-9af6-7e3f40630b95": "xcode",
+    "cc6a6287-b5f7-9e3d-a259-3b322b7dddbf": "xcode",
+    "d060948e-7731-b4dc-9286-a97bf350e81c": "xcode",
+    "d27cd859-5ba4-10e9-ab24-dee68981b2bd": "xcode",
+    "ff92d7fe-5eb5-fc7a-0c05-b3cf8bf80f64": "xcode",
+    "9974b2d0-1e74-36f2-a9f2-06329e40370c": "xcode",
+    # --- iMovie: not in base image (LSMin 15.6, base is 15.4) ---
+    "000b3117-0943-ec30-f8c7-7b978b80d6fd": "imovie",
+    "249d882a-b365-cd2c-2606-a01d92114e3e": "imovie",
+    "2b68aeb0-e88c-7df1-1ba1-57af2cbf65df": "imovie",
+    "3ffb40f8-7e50-6e59-04dd-67d622636609": "imovie",
+    "6277acb4-9fd2-d00d-7d79-a58ddae5cad3": "imovie",
+    "7ba3bf86-beb3-1c4d-c30b-950855378b94": "imovie",
+    "933c6a2f-2d33-b1d1-8336-e2e5bf539e7c": "imovie",
+    "9e570e25-710a-1431-cb5e-c5539787b890": "imovie",
+    "b25e4b35-03b8-3585-6cea-d2636a3e53b5": "imovie",
+    "daef8548-e9e2-5883-c287-4c8ed11d6e83": "imovie",
+    "ef40b520-3ae5-1af1-b698-127c3daf0b0e": "imovie",
+    # --- in_process: mid-task dialog injection (adapter doesn't model this) ---
+    "0d5e19c1-0c96-35ed-b70b-7c6a0f2bf5ad": "in_process",
+    "125631b5-49cc-54af-19dc-83c6c8a96fb8": "in_process",
+    "3ef3a054-c2cc-be98-dc08-a23fedbe68fe": "in_process",
+    "4aace890-790b-d4b9-354d-808d1fb9cc4c": "in_process",
+    "4b16b37c-2eee-cc0c-bc68-578f73213da2": "in_process",
+    "513ec2f0-c6a7-9580-f549-631c52b244f5": "in_process",
+    "61f8753f-7509-7df7-78a1-f9ae5b4ff3b9": "in_process",
+    "72158f95-631f-8af0-20f3-ee0c5505f2d0": "in_process",
+    "724f157a-e886-6536-ee1c-f84a70c3bf45": "in_process",
+    "730c848f-c495-7737-4334-ea734615d6a6": "in_process",
+    "7367605a-1dbf-347b-7d19-c7eacfd075a4": "in_process",
+    "77fae9bf-061e-260c-becc-5aadd0805145": "in_process",
+    "8c67c0bd-771a-70d3-15f6-7e1393af5e12": "in_process",
+    "8f9f1a55-ff4b-bba0-975b-a6e336352fe7": "in_process",
+    "b6a5e0fb-64b8-9b10-be0a-ed16f0ddaee5": "in_process",
+    "ba242ccf-2fe1-eca8-8282-8adf67c7502c": "in_process",
+    "c171c967-0ca8-3410-bffd-0ba6b106fe47": "in_process",
+    "c3ab7a9b-c99b-c734-eeb4-c44169f650c6": "in_process",
+    "c4964f3f-b32b-b3ba-670b-0aaef199cc57": "in_process",
+    "cc652222-e5b1-0baa-f5af-df1070ba4693": "in_process",
+    "cf20112d-60c2-c425-6fe1-59b6df9fa3b8": "in_process",
+    "d89288fd-f56a-a127-5cc2-759ddbeae8de": "in_process",
+    "de2ce6d7-b8dc-2507-5c7e-e35688568a92": "in_process",
+    "e4123eb6-b64c-d772-38b3-e9b1692a1e27": "in_process",
+    "e4b3fa45-01e7-4c8c-5c4d-f14f6a0ccfe1": "in_process",
+    "eb346395-b8fe-03bc-a6e5-a58719b1edce": "in_process",
 }
 
 
-# Per-task pre_command fixes for our VM image.
-# These run BEFORE the task's own pre_command to ensure the correct initial state.
+# Per-task pre_command fixes applied BEFORE the task's own pre_command.
 _PRE_COMMAND_FIXES: dict[str, str] = {
-    # Dark mode tasks: VM ships with dark mode, set light mode first
+    # VM ships with dark mode; these tasks expect light mode as starting state
     "eb346395-b8fe-03bc-a6e5-a58719b1edce": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
     "ce71ae98-6947-6c18-87ac-cdecb1750e5a": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
-    # TODO: these tasks auto-pass because our VM's Dock/settings don't match
-    # macOSWorld's expected initial state. Need to figure out the right Dock layout.
-    # "de2ce6d7-b8dc-2507-5c7e-c14f01c63a4c": "add Safari to Dock",
-    # "1dac89be-62ba-1f2d-2a0f-3f1cd2587ef0": "add Safari to Dock",
-    # "5a6b33d6-271f-3003-1f4f-e15dec4f8769": "add Freeform to Dock",
-    # "17fed363-d017-b26c-22f2-ec1865306075": "set notification previews to always",
 }
 
 
