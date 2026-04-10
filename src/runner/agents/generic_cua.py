@@ -145,6 +145,7 @@ class GenericCUAAgent(BaseCUAAgent):
         history: list[dict[str, Any]] = []
 
         for step_idx in range(self.max_steps):
+            await self._fire_in_process(environment, step_idx)
             system = build_system_prompt(
                 self._prompt_template,
                 api_w,

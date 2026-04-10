@@ -152,6 +152,7 @@ class GeminiCUAAgent(BaseCUAAgent):
         pending_calls: list = []
 
         for step_idx in range(self.max_steps):
+            await self._fire_in_process(environment, step_idx)
             # Feed back screenshot for pending function calls
             if step_idx > 0 and pending_calls:
                 parts = []

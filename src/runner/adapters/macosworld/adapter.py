@@ -194,33 +194,6 @@ _EXCLUDED_TASK_IDS: dict[str, str] = {
     "b25e4b35-03b8-3585-6cea-d2636a3e53b5": "imovie",
     "daef8548-e9e2-5883-c287-4c8ed11d6e83": "imovie",
     "ef40b520-3ae5-1af1-b698-127c3daf0b0e": "imovie",
-    # --- in_process: mid-task dialog injection (adapter doesn't model this) ---
-    "0d5e19c1-0c96-35ed-b70b-7c6a0f2bf5ad": "in_process",
-    "125631b5-49cc-54af-19dc-83c6c8a96fb8": "in_process",
-    "3ef3a054-c2cc-be98-dc08-a23fedbe68fe": "in_process",
-    "4aace890-790b-d4b9-354d-808d1fb9cc4c": "in_process",
-    "4b16b37c-2eee-cc0c-bc68-578f73213da2": "in_process",
-    "513ec2f0-c6a7-9580-f549-631c52b244f5": "in_process",
-    "61f8753f-7509-7df7-78a1-f9ae5b4ff3b9": "in_process",
-    "72158f95-631f-8af0-20f3-ee0c5505f2d0": "in_process",
-    "724f157a-e886-6536-ee1c-f84a70c3bf45": "in_process",
-    "730c848f-c495-7737-4334-ea734615d6a6": "in_process",
-    "7367605a-1dbf-347b-7d19-c7eacfd075a4": "in_process",
-    "77fae9bf-061e-260c-becc-5aadd0805145": "in_process",
-    "8c67c0bd-771a-70d3-15f6-7e1393af5e12": "in_process",
-    "8f9f1a55-ff4b-bba0-975b-a6e336352fe7": "in_process",
-    "b6a5e0fb-64b8-9b10-be0a-ed16f0ddaee5": "in_process",
-    "ba242ccf-2fe1-eca8-8282-8adf67c7502c": "in_process",
-    "c171c967-0ca8-3410-bffd-0ba6b106fe47": "in_process",
-    "c3ab7a9b-c99b-c734-eeb4-c44169f650c6": "in_process",
-    "c4964f3f-b32b-b3ba-670b-0aaef199cc57": "in_process",
-    "cc652222-e5b1-0baa-f5af-df1070ba4693": "in_process",
-    "cf20112d-60c2-c425-6fe1-59b6df9fa3b8": "in_process",
-    "d89288fd-f56a-a127-5cc2-759ddbeae8de": "in_process",
-    "de2ce6d7-b8dc-2507-5c7e-e35688568a92": "in_process",
-    "e4123eb6-b64c-d772-38b3-e9b1692a1e27": "in_process",
-    "e4b3fa45-01e7-4c8c-5c4d-f14f6a0ccfe1": "in_process",
-    "eb346395-b8fe-03bc-a6e5-a58719b1edce": "in_process",
 }
 
 
@@ -365,6 +338,7 @@ class MacOSWorldToHarbor:
             "task_id": task.task_id,
             "before_action_delay_seconds": task.before_action_delay_seconds,
             "before_grading_delay_seconds": task.before_grading_delay_seconds,
+            "in_process": task.in_process,
         }
         (setup_dir / "config.json").write_text(
             json.dumps(setup_config, indent=2) + "\n", encoding="utf-8"

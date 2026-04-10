@@ -247,17 +247,23 @@ class BaseCUAAgent(BaseAgent):
         if sandbox is None:
             raise RuntimeError("CUA agents require an environment with a .sandbox property")
         self.sandbox = sandbox
-        await self.start_recording(sandbox)
+        # await self.start_recording(sandbox)
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.steps = [{"step_id": 1, "source": "user", "message": ""}]
         self.total_in = 0
         self.total_out = 0
         return sandbox
 
+    async def _fire_in_process(self, environment: BaseEnvironment, step_idx: int) -> None:
+        """Fire in_process dialog if the environment supports it and step matches."""
+        fn = getattr(environment, "fire_in_process", None)
+        if fn:
+            await fn(step_idx)
+
     async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
         """Common teardown: stop recording, write trajectory, set token counts."""
         assert self.sandbox is not None
-        await self.stop_recording(self.sandbox)
+        # await self.stop_recording(self.sandbox)
         write_trajectory(
             self.logs_dir, self.steps, self.total_in, self.total_out, model, agent_name
         )

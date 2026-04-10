@@ -94,6 +94,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
         ]
 
         for step_idx in range(self.max_steps):
+            await self._fire_in_process(environment, step_idx)
             _truncate_old_screenshots(messages, keep=5)
 
             self.logger.info(f"step {step_idx+1}/{self.max_steps}: calling Anthropic API...")

@@ -66,6 +66,7 @@ class OpenAICUAAgent(BaseCUAAgent):
         ]
 
         for step_idx in range(self.max_steps):
+            await self._fire_in_process(environment, step_idx)
             response = client.responses.create(
                 model=model,
                 tools=tools,  # type: ignore

@@ -24,4 +24,5 @@ class DebugCUAAgent(BaseCUAAgent):
         await sandbox.mouse.click(960, 540)
         result = await sandbox.exec_ssh("echo hello world")
         print(f"[debug] screenshot={len(ss)} bytes, exec={result}")
+        await self._fire_in_process(environment, 1)  # after step 1
         await self.post_run(context, "debug", "debug-cua")

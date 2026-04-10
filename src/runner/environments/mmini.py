@@ -201,6 +201,18 @@ class MminiEnvironment(BaseEnvironment):
                 else:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
 
+        # Load in_process config (if any) for fire_in_process()
+        self._in_process_cmd = None
+        self._in_process_step = None
+        config_path = setup_dir / "config.json"
+        if config_path.exists():
+            import json as _json
+            cfg = _json.loads(config_path.read_text())
+            ip = cfg.get("in_process")
+            if ip and isinstance(ip, list) and len(ip) >= 2:
+                self._in_process_cmd = ip[0]
+                self._in_process_step = ip[1]
+
         self.logger.info("task setup complete")
 
     # Shared benchmark assets used by macOSWorld tasks
@@ -342,6 +354,19 @@ class MminiEnvironment(BaseEnvironment):
         return ExecResult(
             stdout=result.stdout, stderr=None, return_code=result.return_code
         )
+
+    async def fire_in_process(self, step: int) -> None:
+        """Fire the in_process dialog if the current step matches.
+
+        Agents call this after each step. If the task has an in_process
+        field and step matches, the dialog osascript is spawned in the
+        background so it appears on screen for the agent's next screenshot.
+        """
+        if self._in_process_cmd and step == self._in_process_step:
+            self.logger.info(f"in_process: firing dialog at step {step}")
+            await self.sandbox.exec_ssh(
+                f"nohup {self._in_process_cmd} > /dev/null 2>&1 &"
+            )
 
     async def _exec_ax(self, command: str, timeout_sec: int = 30) -> ExecResult:
         """Run a command via exec_ax (cua-server chain) for AX-needing calls."""
