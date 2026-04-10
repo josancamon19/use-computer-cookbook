@@ -186,40 +186,54 @@ def _render(template: str, **kwargs) -> str:
 # Tasks excluded from export — broken on our VM image.
 # Each entry: task UUID → reason (what needs to change to unblock it).
 _EXCLUDED_TASK_IDS: dict[str, str] = {
-    # Keystroke pre_command: TCC accessibility permission not granted.
-    # Fix: grant "System Events" accessibility in base image via TCC.db
-    "1df5d9f4-5b69-5e98-a8ab-d415dae9ca83": "pre_command keystroke blocked by TCC",
-    # Grader hangs: Contacts osascript hangs on fresh VM (never writes reward file).
-    # Fix: investigate why osascript queries to Contacts hang — possibly needs first-launch
-    "89f88c8c-2c64-91a0-444f-fa71315cd92c": "grader: Contacts osascript hangs",
-    "b071a2dc-6b16-5e76-16a8-72803d557495": "grader: Contacts osascript hangs",
-    "64824755-362d-64b6-fcac-e7c5348a09f0": "grader: Contacts osascript hangs",
-    "9d73393d-14a3-1259-70fb-32aae63b3b80": "grader: Contacts osascript hangs",
-    "a204124e-c06a-08b1-13fa-5e61f689180c": "grader: Contacts osascript hangs",
-    # Grader hangs: Reminders osascript hangs on fresh VM (never writes reward file).
-    # Fix: investigate why osascript queries to Reminders hang
-    "e8bc0bd1-1618-ea00-345b-589b1fef3f99": "grader: Reminders osascript hangs",
-    "b431b94b-193c-0478-1e26-709f7d3aa453": "grader: Reminders osascript hangs",
-    "2f72dba5-c364-d21b-7040-684f4d6d40b7": "grader: Reminders osascript hangs",
-    "48cf0af3-0612-dbcd-14da-d5202eed6ce9": "grader: Reminders osascript hangs",
-    "4a89fe83-8a93-ecd4-7841-c0bb470571c2": "grader: Reminders osascript hangs",
-    "e7491382-6e93-288d-9d67-24369c382e86": "grader: Reminders osascript hangs",
-    # Grader hangs: Media tasks — QuickTime/Preview osascript queries timeout.
-    # Fix: investigate why these specific osascript queries hang
-    "1ea85063-355f-bfad-3de7-3ab038261d62": "grader: QuickTime osascript hangs",
-    "e2a6a1ac-e352-6680-00ae-d191a817d143": "grader: media osascript hangs",
-    "efd1a2f9-b0b5-f14b-1fac-70a7f8e8a9e7": "grader: media osascript hangs",
-    # Grader hangs: multi_apps tasks — grader osascript doesn't write reward file.
-    # Fix: investigate grader commands
-    "48a16605-74e7-c9d8-01d7-3001bc0b0c1d": "grader: osascript hangs, no reward file",
-    "f0147143-27e5-e942-cd8c-ab723dc6e490": "grader: osascript hangs, no reward file",
-    # Non-deterministic failures (~5-10% flake rate across pass@50).
-    # Fail on random Minis with RewardFileNotFoundError or RuntimeError.
-    # Grader osascript sometimes finishes in time, sometimes doesn't.
-    # productivity__6a40e62d: 45/50 ok — 3 RewardFileNotFound + 2 RuntimeError
-    "6a40e62d-c990-7d55-81fb-f2ced53664b7": "flaky grader: 90% pass rate, osascript timeout",
-    # safety__7f81662d: 47/50 ok — 3 RewardFileNotFound
-    "7f81662d-5c57-9078-b0c4-e1af24d63304": "flaky grader: 94% pass rate, osascript timeout",
+    "531b9a8b-5106-d64d-9e1e-126c2311729a": "needs Xcode (not in base image)",
+    "9493a3da-c76d-4c96-787e-d636ff40563d": "needs Xcode (not in base image)",
+    "9e9d2f46-8f9e-3ce7-7cba-b33b494f617b": "needs Xcode (not in base image)",
+    "a0ef827d-8a52-57ae-3fd0-86aeec9ca7d7": "needs Xcode (not in base image)",
+    "b2daa417-a51f-39f4-1218-4ea933e13a61": "needs Xcode (not in base image)",
+    "b842ca44-34c0-a4ff-9af6-7e3f40630b95": "needs Xcode (not in base image)",
+    "cc6a6287-b5f7-9e3d-a259-3b322b7dddbf": "needs Xcode (not in base image)",
+    "d060948e-7731-b4dc-9286-a97bf350e81c": "needs Xcode (not in base image)",
+    "d27cd859-5ba4-10e9-ab24-dee68981b2bd": "needs Xcode (not in base image)",
+    "ff92d7fe-5eb5-fc7a-0c05-b3cf8bf80f64": "needs Xcode (not in base image)",
+    "9974b2d0-1e74-36f2-a9f2-06329e40370c": "needs Xcode (not in base image)",
+    "000b3117-0943-ec30-f8c7-7b978b80d6fd": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "249d882a-b365-cd2c-2606-a01d92114e3e": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "2b68aeb0-e88c-7df1-1ba1-57af2cbf65df": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "3ffb40f8-7e50-6e59-04dd-67d622636609": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "6277acb4-9fd2-d00d-7d79-a58ddae5cad3": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "7ba3bf86-beb3-1c4d-c30b-950855378b94": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "933c6a2f-2d33-b1d1-8336-e2e5bf539e7c": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "9e570e25-710a-1431-cb5e-c5539787b890": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "b25e4b35-03b8-3585-6cea-d2636a3e53b5": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "daef8548-e9e2-5883-c287-4c8ed11d6e83": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "ef40b520-3ae5-1af1-b698-127c3daf0b0e": "needs iMovie (LSMin 15.6 vs base 15.4)",
+    "0d5e19c1-0c96-35ed-b70b-7c6a0f2bf5ad": "in_process: mid-task dialog injection unsupported",
+    "125631b5-49cc-54af-19dc-83c6c8a96fb8": "in_process: mid-task dialog injection unsupported",
+    "3ef3a054-c2cc-be98-dc08-a23fedbe68fe": "in_process: mid-task dialog injection unsupported",
+    "4aace890-790b-d4b9-354d-808d1fb9cc4c": "in_process: mid-task dialog injection unsupported",
+    "4b16b37c-2eee-cc0c-bc68-578f73213da2": "in_process: mid-task dialog injection unsupported",
+    "513ec2f0-c6a7-9580-f549-631c52b244f5": "in_process: mid-task dialog injection unsupported",
+    "61f8753f-7509-7df7-78a1-f9ae5b4ff3b9": "in_process: mid-task dialog injection unsupported",
+    "72158f95-631f-8af0-20f3-ee0c5505f2d0": "in_process: mid-task dialog injection unsupported",
+    "724f157a-e886-6536-ee1c-f84a70c3bf45": "in_process: mid-task dialog injection unsupported",
+    "730c848f-c495-7737-4334-ea734615d6a6": "in_process: mid-task dialog injection unsupported",
+    "7367605a-1dbf-347b-7d19-c7eacfd075a4": "in_process: mid-task dialog injection unsupported",
+    "77fae9bf-061e-260c-becc-5aadd0805145": "in_process: mid-task dialog injection unsupported",
+    "8c67c0bd-771a-70d3-15f6-7e1393af5e12": "in_process: mid-task dialog injection unsupported",
+    "8f9f1a55-ff4b-bba0-975b-a6e336352fe7": "in_process: mid-task dialog injection unsupported",
+    "b6a5e0fb-64b8-9b10-be0a-ed16f0ddaee5": "in_process: mid-task dialog injection unsupported",
+    "ba242ccf-2fe1-eca8-8282-8adf67c7502c": "in_process: mid-task dialog injection unsupported",
+    "c171c967-0ca8-3410-bffd-0ba6b106fe47": "in_process: mid-task dialog injection unsupported",
+    "c3ab7a9b-c99b-c734-eeb4-c44169f650c6": "in_process: mid-task dialog injection unsupported",
+    "c4964f3f-b32b-b3ba-670b-0aaef199cc57": "in_process: mid-task dialog injection unsupported",
+    "cc652222-e5b1-0baa-f5af-df1070ba4693": "in_process: mid-task dialog injection unsupported",
+    "cf20112d-60c2-c425-6fe1-59b6df9fa3b8": "in_process: mid-task dialog injection unsupported",
+    "d89288fd-f56a-a127-5cc2-759ddbeae8de": "in_process: mid-task dialog injection unsupported",
+    "de2ce6d7-b8dc-2507-5c7e-e35688568a92": "in_process: mid-task dialog injection unsupported",
+    "e4123eb6-b64c-d772-38b3-e9b1692a1e27": "in_process: mid-task dialog injection unsupported",
+    "e4b3fa45-01e7-4c8c-5c4d-f14f6a0ccfe1": "in_process: mid-task dialog injection unsupported",
+    "eb346395-b8fe-03bc-a6e5-a58719b1edce": "in_process: mid-task dialog injection unsupported",
 }
 
 

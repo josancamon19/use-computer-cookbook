@@ -160,7 +160,7 @@ class MminiEnvironment(BaseEnvironment):
             if n > 0:
                 # Stage the rewritten file in the trial dir so the upload path
                 # has a real file to send. Trial dir is per-trial so this is safe.
-                staged = self._trial_dir / ".test.transpiled.sh"
+                staged = self.trial_paths.trial_dir / ".test.transpiled.sh"
                 staged.write_text(rewritten)
                 self.logger.info(f"uploading test.sh (transpiled {n} AX call(s))")
                 await self.upload_file(staged, "/tests/test.sh")
