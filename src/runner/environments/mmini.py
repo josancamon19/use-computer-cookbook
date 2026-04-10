@@ -127,7 +127,7 @@ class MminiEnvironment(BaseEnvironment):
 
         self.logger.info("creating mmini sandbox...")
         with _timer() as t:
-            self._sandbox = await self._client.create(type="macos", wait=True, host=self._host)
+            self._sandbox = await self._client.create(type="macos", host=self._host)
         self._sandbox_id = self._sandbox.sandbox_id
         self._vm_ip = self._sandbox.vm_ip
         self.logger.info(f"sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
