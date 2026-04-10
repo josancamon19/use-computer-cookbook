@@ -147,11 +147,26 @@ class MminiEnvironment(BaseEnvironment):
         """Run pre-agent task setup from tests/setup/ if present."""
         setup_dir = self._task_dir / "tests" / "setup"
 
-        # Upload test.sh for the verifier (Harbor doesn't mount task dirs in remote envs)
+        # Upload test.sh for the verifier (Harbor doesn't mount task dirs in
+        # remote envs). Transpile osascript+System Events Accessibility
+        # patterns into python3.12 invocations *before* upload — see
+        # mmini.ax_transpile for the why and the supported patterns.
         test_script = self._task_dir / "tests" / "test.sh"
         if test_script.exists():
-            self.logger.info("uploading test.sh")
-            await self.upload_file(test_script, "/tests/test.sh")
+            from mmini.ax_transpile import transpile
+
+            raw = test_script.read_text()
+            rewritten, n = transpile(raw)
+            if n > 0:
+                # Stage the rewritten file in the trial dir so the upload path
+                # has a real file to send. Trial dir is per-trial so this is safe.
+                staged = self._trial_dir / ".test.transpiled.sh"
+                staged.write_text(rewritten)
+                self.logger.info(f"uploading test.sh (transpiled {n} AX call(s))")
+                await self.upload_file(staged, "/tests/test.sh")
+            else:
+                self.logger.info("uploading test.sh")
+                await self.upload_file(test_script, "/tests/test.sh")
 
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
@@ -300,8 +315,19 @@ class MminiEnvironment(BaseEnvironment):
         # The right fix is server-side timeouts in lume's exec handler.
         full_cmd = self._wrap_with_timeout(full_cmd, timeout)
 
+        # Verifier scripts (test.sh) get transpiled at upload time to invoke
+        # python3.12 with AX calls, but those calls only get TCC's
+        # Accessibility grant when invoked under cua-server's launchd-domain
+        # responsibility chain. The SSH-backed exec_ssh puts
+        # sshd-keygen-wrapper in the chain (which has Accessibility=denied)
+        # and TCC propagates the deny to children. Routing the verifier
+        # exec via exec_ax (cua-server's run_command) gives us the right
+        # chain. Detection: the command path contains "test.sh".
         with _timer() as t:
-            result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
+            if "test.sh" in full_cmd:
+                result = await self.sandbox.exec_ax(full_cmd, timeout=timeout)
+            else:
+                result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
         if "test.sh" in full_cmd:
             self.logger.info(f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
         else:

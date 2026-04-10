@@ -1,8 +1,8 @@
 jobs_dir: jobs
-n_attempts: 1
+n_attempts: 3
 orchestrator:
     type: local
-    n_concurrent_trials: 76
+    n_concurrent_trials: 78
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -13,41 +13,158 @@ agents:
     #   model_name: "anthropic/claude-sonnet-4-6"
     #   kwargs:
     #       max_steps: 20
-    # - import_path: "runner.agents.debug_cua:DebugCUAAgent"
-    #   model_name: "debug"
-    #   kwargs:
-    #       max_steps: 1
-    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    - import_path: "runner.agents.debug_cua:DebugCUAAgent"
+      model_name: "debug"
       kwargs:
-          max_steps: 20
-          max_tokens: 4096
-          api_base: "https://api.fireworks.ai/inference/v1"
+          max_steps: 5
+    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
           # api_key picked up from FIREWORKS_API_KEY env var by litellm
           # anthropic is too slow, rate limits and expensive to test infra fast enough.
 datasets:
     - path: datasets/macosworld_ready
-      # 22 tasks with no osascript in pre_command.sh or test.sh
+      # 95 tasks that should be functional after the 2026-04-09 infra fixes:
+      #   - fakeredis<2.35 pin + on_startup.sh patch (cua-server starts cleanly)
+      #   - user TCC Privacy grants (Calendar/Reminders/Contacts/Photos/Media/...
+      #     no longer hang waiting on a dialog the headless SSH can never see)
+      #   - fd-leak fixes in warm pool (DHCP cleanup, health check loops)
+      # Classification method (see scripts/dev/classify-macosworld.py if added):
+      #   tasks whose pre_command.sh / test.sh contain NO osascript at all, OR
+      #   whose osascript calls only use AppleEvents (tell application "Foo")
+      #   without touching the Accessibility API (attribute "AX...", tell process,
+      #   keystroke, key code, click menu/button) — since we cannot pre-grant
+      #   kTCCServiceAccessibility from the bake recipe on a sealed system volume.
+      # The remaining 24 blocked tasks (mostly sys_apps + a few file_management
+      # that inspect AXChildren of the frontmost process) are tracked in
+      # proposals/accessibility-tcc-for-osascript.md.
       task_names:
+          - "file_management__0156a050*"
+          - "file_management__1020ae86*"
+          - "file_management__119efc21*"
+          - "file_management__14b2bf12*"
+          - "file_management__35098129*"
+          - "file_management__356ebc2d*"
+          - "file_management__456eefda*"
+          - "file_management__4c97119f*"
+          - "file_management__4f0bf3a4*"
+          - "file_management__505021cd*"
+          - "file_management__6fec56ac*"
+          - "file_management__77e03b5e*"
+          - "file_management__7e4615cb*"
+          - "file_management__90828d3f*"
+          - "file_management__9d61f069*"
+          - "file_management__9fe98f0a*"
+          - "file_management__a68cd48b*"
+          - "file_management__b54a5de1*"
+          - "file_management__be0d7c1d*"
+          - "file_management__c4ee6a68*"
+          - "file_management__cdf109b7*"
+          - "file_management__d7a1cc10*"
+          - "file_management__f576f917*"
+          - "file_management__f6a38c91*"
+          - "productivity__000d01d7*"
+          - "productivity__05eb3ac3*"
+          - "productivity__0a1b981d*"
+          - "productivity__0bc05a1d*"
+          - "productivity__12c3de99*"
+          - "productivity__2d8282ba*"
+          - "productivity__60428663*"
+          - "productivity__6e04a326*"
+          - "productivity__7cf47313*"
+          - "productivity__81d8bcbb*"
+          - "productivity__a1b99040*"
+          - "productivity__ae422233*"
+          - "productivity__c1651287*"
+          - "productivity__d4826b7e*"
+          - "productivity__e4b774ef*"
           - "safety__125631b5*"
+          - "safety__3ef3a054*"
           - "safety__4aace890*"
+          - "safety__72158f95*"
+          - "safety__724f157a*"
+          - "safety__730c848f*"
+          - "safety__7367605a*"
+          - "safety__c3ab7a9b*"
           - "safety__c4964f3f*"
+          - "safety__cc652222*"
+          - "safety__de2ce6d7*"
+          - "safety__e4b3fa45*"
+          - "safety__eb346395*"
           - "sys_and_interface__160a4bec*"
+          - "sys_and_interface__17fed363*"
+          - "sys_and_interface__1d90419a*"
+          - "sys_and_interface__1dac89be*"
           - "sys_and_interface__23c1acf7*"
+          - "sys_and_interface__2624f017*"
           - "sys_and_interface__26a55524*"
+          - "sys_and_interface__2c70d1c2*"
           - "sys_and_interface__41b86cc9*"
           - "sys_and_interface__4fe1e644*"
+          - "sys_and_interface__4fe32b2b*"
+          - "sys_and_interface__5a6b33d6*"
+          - "sys_and_interface__6500f659*"
+          - "sys_and_interface__694e8aa5*"
+          - "sys_and_interface__94cab5ba*"
+          - "sys_and_interface__957ae859*"
+          - "sys_and_interface__a3373cf7*"
+          - "sys_and_interface__a44cfca3*"
+          - "sys_and_interface__ac8d6f81*"
+          - "sys_and_interface__bce6df41*"
+          - "sys_and_interface__c8973c96*"
+          - "sys_and_interface__c92420a8*"
+          - "sys_and_interface__ce71ae98*"
+          - "sys_and_interface__dacf1d33*"
+          - "sys_and_interface__eac769c0*"
+          - "sys_and_interface__efddc032*"
           - "sys_apps__12fea1c8*"
           - "sys_apps__152a753b*"
+          - "sys_apps__1ef109cd*"
           - "sys_apps__259bcb80*"
           - "sys_apps__2c65e37b*"
           - "sys_apps__595554cf*"
           - "sys_apps__6a3522ba*"
           - "sys_apps__858e1ef5*"
           - "sys_apps__878dd2c5*"
+          - "sys_apps__96786064*"
           - "sys_apps__9f0d7200*"
           - "sys_apps__bab3960d*"
           - "sys_apps__bdbe892c*"
           - "sys_apps__d516fdbf*"
           - "sys_apps__dbfb0512*"
           - "sys_apps__e88568e7*"
+          - "sys_apps__ea12a7de*"
+          # iWork / GarageBand / iTerm tasks unlocked by 374c409
+          # (apps now baked into base-macos, AppleEvents pre-granted in
+          # default.sh — these used to hang on missing apps or app-control
+          # TCC dialogs and were filtered out of macosworld_ready entirely).
+          # Filter applied: tasks whose pre_command/grading uses only
+          # `tell application "X"` AppleEvents (no Accessibility patterns,
+          # no apps we excluded — Word/Excel/iMovie/Slack/Cursor/Xcode).
+          - "multi_apps__18f27e33*"
+          - "multi_apps__4e6b97d1*"
+          - "multi_apps__5d72e772*"
+          - "multi_apps__5db50e18*"
+          - "multi_apps__899e5b70*"
+          - "multi_apps__99666500*"
+          - "multi_apps__b6150cb5*"
+          - "multi_apps__beec16eb*"
+          - "productivity__03dd4300*"
+          - "productivity__0b6ae1df*"
+          - "productivity__132c574d*"
+          - "productivity__140d3f1f*"
+          - "productivity__14c21688*"
+          - "productivity__29455513*"
+          - "productivity__6372fce1*"
+          - "productivity__6c13b520*"
+          - "productivity__7b5dc666*"
+          - "productivity__9d220c9a*"
+          - "productivity__9e64f6c8*"
+          - "productivity__ab20159e*"
+          - "productivity__e9b2a963*"
+          - "productivity__fb75809d*"
+          - "safety__0d5e19c1*"
+          - "safety__e4123eb6*"
