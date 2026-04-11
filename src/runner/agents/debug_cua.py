@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -20,9 +22,12 @@ class DebugCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
-        ss = await sandbox.screenshot.take_full_screen()
-        await sandbox.mouse.click(960, 540)
-        result = await sandbox.exec_ssh("echo hello world")
-        print(f"[debug] screenshot={len(ss)} bytes, exec={result}")
-        await self._fire_in_process(environment, 1)  # after step 1
+        for step in range(1, self.max_steps + 1):
+            ss = await sandbox.screenshot.take_full_screen()
+            await sandbox.mouse.click(960, 540)
+            result = await sandbox.exec_ssh("echo hello world")
+            print(f"[debug] step={step}/{self.max_steps} screenshot={len(ss)} bytes, exec={result}")
+            await self._fire_in_process(environment, step)
+            if step < self.max_steps:
+                await asyncio.sleep(1)
         await self.post_run(context, "debug", "debug-cua")

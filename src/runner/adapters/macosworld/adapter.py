@@ -182,6 +182,11 @@ _EXCLUDED_TASK_IDS: dict[str, str] = {
     "d27cd859-5ba4-10e9-ab24-dee68981b2bd": "xcode",
     "ff92d7fe-5eb5-fc7a-0c05-b3cf8bf80f64": "xcode",
     "9974b2d0-1e74-36f2-a9f2-06329e40370c": "xcode",
+    "cf20112d-60c2-c425-6fe1-59b6df9fa3b8": "xcode",
+    "77fae9bf-061e-260c-becc-5aadd0805145": "xcode",
+    # --- Pages templates: base image's Pages doesn't carry the template gallery ---
+    "03dd4300-a9e4-8b44-1339-6333dd82066d": "pages-template",  # "Essay"
+    "2db5297f-0f41-1a5e-7e5c-d109d2993b63": "pages-template",  # "Modern Letter"
     # --- iMovie: not in base image (LSMin 15.6, base is 15.4) ---
     "000b3117-0943-ec30-f8c7-7b978b80d6fd": "imovie",
     "249d882a-b365-cd2c-2606-a01d92114e3e": "imovie",

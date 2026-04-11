@@ -2,7 +2,7 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 70
+    n_concurrent_trials: 16
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -13,17 +13,19 @@ agents:
     #   model_name: "anthropic/claude-sonnet-4-6"
     #   kwargs:
     #       max_steps: 20
-    - import_path: "runner.agents.debug_cua:DebugCUAAgent"
-      model_name: "debug"
-      kwargs:
-          max_steps: 1
-    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    # - import_path: "runner.agents.debug_cua:DebugCUAAgent"
+    #   model_name: "debug"
     #   kwargs:
-    #       max_steps: 20
-    #       max_tokens: 4096
-    #       api_base: "https://api.fireworks.ai/inference/v1"
-    # api_key picked up from FIREWORKS_API_KEY env var by litellm
-    # anthropic is too slow, rate limits and expensive to test infra fast enough.
+    #       max_steps: 1
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+      kwargs:
+          max_steps: 20
+          max_tokens: 4096
+          api_base: "https://api.fireworks.ai/inference/v1"
 datasets:
     - path: datasets/macosworld_ready
+      # task_names:
+      #     - sys_apps__4a89fe83-8a93-ecd4-7841-c0bb470571c2
+      # why does debug agent 1 step runs almost without issues whereas a real agent has so much ???
+      # it's fireworks API rate limits?
