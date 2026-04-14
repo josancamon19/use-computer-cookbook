@@ -1,11 +1,13 @@
 """
-Minimal HTTP sidecar: POST /run drives a single task through `harbor run`,
-streaming NDJSON events back. No custom agent loop — harbor loads
-AnthropicCUAAgent or GenericCUAAgent from the runner package based on model.
+Minimal HTTP sidecar for "Run with model". No log scraping, no event streams —
+just process lifecycle + reading files harbor writes.
 
-  POST /run   body: {task: {instruction, pre_command, grading_command},
-                     model, gateway_url, gateway_api_key, max_steps?}
-              response: application/x-ndjson stream of events
+  POST /run          start a harbor run in the background; returns {job_id}
+  GET  /jobs/{id}    current status pulled from disk; terminal state has reward
+  GET  /health
+
+Jobs are written under /data/jobs (shared with harbor-viewer) so once a run
+completes the UI can deep-link straight to `harbor view` for inspection.
 """
 from __future__ import annotations
 
@@ -13,19 +15,34 @@ import asyncio
 import json
 import os
 import re
-import shutil
-import tempfile
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 from aiohttp import web
 
+JOBS_DIR = Path(os.environ.get("JOBS_DIR", "/data/jobs"))
 REPO_ROOT = Path("/repo")
 RUNNER_DIR = REPO_ROOT / "runner"
+SANDBOX_RE = re.compile(r"(sb-[0-9a-f]{16,})")
+
+
+@dataclass
+class JobRec:
+    job_id: str
+    work_dir: Path
+    task: asyncio.Task
+    created_at: float = field(default_factory=time.time)
+    returncode: int | None = None
+    error: str | None = None
+
+
+JOBS: dict[str, JobRec] = {}
 
 
 def agent_spec_for(model: str, max_steps: int = 30) -> dict:
-    """Pick a CUA agent class based on model name."""
     if "kimi" in model or "moonshot" in model or model.startswith("openai/"):
         return {
             "import_path": "runner.agents.generic_cua:GenericCUAAgent",
@@ -36,7 +53,6 @@ def agent_spec_for(model: str, max_steps: int = 30) -> dict:
                 "api_base": "https://api.fireworks.ai/inference/v1",
             },
         }
-    # default: Anthropic CUA (Sonnet 4.6, Opus 4.6, etc.)
     return {
         "import_path": "runner.agents.anthropic_cua:AnthropicCUAAgent",
         "model_name": model if "/" in model else f"anthropic/{model}",
@@ -44,55 +60,53 @@ def agent_spec_for(model: str, max_steps: int = 30) -> dict:
     }
 
 
-def materialize_task_dir(base: Path, task: dict) -> Path:
-    """Write a collected task as a harbor task layout that `harbor run -p` can load."""
-    task_dir = base / "task"
+def write_task_dir(task_dir: Path, task: dict) -> None:
     (task_dir / "tests" / "setup").mkdir(parents=True, exist_ok=True)
     (task_dir / "environment").mkdir(exist_ok=True)
 
     (task_dir / "instruction.md").write_text(task.get("instruction", ""))
     (task_dir / "task.toml").write_text(
-        "[metadata]\n"
-        "author_name = \"mmini-collect\"\n"
-        "difficulty = \"unknown\"\n"
-        "\n[verifier]\ntimeout_sec = 1800\n"
-        "\n[agent]\ntimeout_sec = 1800\n"
-        "\n[environment]\ncpus = 4\nmemory_mb = 8192\nallow_internet = true\n"
+        "[metadata]\nauthor_name = \"mmini-collect\"\ndifficulty = \"unknown\"\n"
+        "[verifier]\ntimeout_sec = 1800\n"
+        "[agent]\ntimeout_sec = 1800\n"
+        "[environment]\ncpus = 4\nmemory_mb = 8192\nallow_internet = true\n"
     )
-    # Grader script — mirrors the shape in datasets/macosworld_ready/*/tests/test.sh
-    graders = task.get("grading_command", [])
-    grader_sh = "#!/bin/bash\n# auto-generated from collected task\nset +e\n"
-    grader_sh += 'PREFIX=""\n[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"\n'
-    grader_sh += 'REWARD="${PREFIX}/logs/verifier/reward.txt"\n'
-    if not graders:
-        # No grader = assume pass (harbor requires something)
-        grader_sh += 'echo "1" > "$REWARD"; echo "Score: 1"; exit 0\n'
-    else:
-        # Each entry is [cmd, weight]; treat as AND of all being True
-        for cmd, _weight in graders:
-            grader_sh += f"if ! bash -c {json.dumps(cmd)} 2>/dev/null | grep -qi 'true'; then echo '0' > \"$REWARD\"; echo 'Score: 0'; exit 0; fi\n"
-        grader_sh += 'echo "1" > "$REWARD"; echo "Score: 1"; exit 0\n'
-    (task_dir / "tests" / "test.sh").write_text(grader_sh)
-    (task_dir / "tests" / "test.sh").chmod(0o755)
 
-    # pre_command.sh + config.json under tests/setup/ — harbor executes these in-VM
-    pre = task.get("pre_command", "") or ""
+    graders = task.get("grading_command") or []
+    grader_sh = [
+        "#!/bin/bash",
+        'PREFIX=""',
+        '[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"',
+        'REWARD="${PREFIX}/logs/verifier/reward.txt"',
+    ]
+    if not graders:
+        grader_sh += ['echo "1" > "$REWARD"', 'echo "Score: 1"', 'exit 0']
+    else:
+        for cmd, _weight in graders:
+            grader_sh += [
+                f"if ! bash -c {json.dumps(cmd)} 2>/dev/null | grep -qi 'true'; then",
+                '  echo "0" > "$REWARD"; echo "Score: 0"; exit 0',
+                "fi",
+            ]
+        grader_sh += ['echo "1" > "$REWARD"', 'echo "Score: 1"', 'exit 0']
+    test_sh = task_dir / "tests" / "test.sh"
+    test_sh.write_text("\n".join(grader_sh) + "\n")
+    test_sh.chmod(0o755)
+
+    pre = (task.get("pre_command") or "").strip()
     if pre:
-        (task_dir / "tests" / "setup" / "pre_command.sh").write_text(
-            "#!/bin/bash\n" + pre + "\n"
-        )
-        (task_dir / "tests" / "setup" / "pre_command.sh").chmod(0o755)
+        pc = task_dir / "tests" / "setup" / "pre_command.sh"
+        pc.write_text("#!/bin/bash\n" + pre + "\n")
+        pc.chmod(0o755)
     (task_dir / "tests" / "setup" / "config.json").write_text(json.dumps({
         "before_action_delay_seconds": task.get("before_action_delay_seconds", 5),
         "before_grading_delay_seconds": task.get("before_grading_delay_seconds", 5),
     }))
-    return task_dir
 
 
-def build_job_yaml(base: Path, agent_spec: dict, gateway_url: str) -> Path:
-    job_path = base / "job.yaml"
-    job = {
-        "jobs_dir": str(base / "jobs"),
+def write_job_yaml(job_yaml: Path, jobs_dir: Path, agent_spec: dict, gateway_url: str) -> None:
+    job_yaml.write_text(yaml.safe_dump({
+        "jobs_dir": str(jobs_dir),
         "n_attempts": 1,
         "orchestrator": {"type": "local", "n_concurrent_trials": 1},
         "environment": {
@@ -101,129 +115,160 @@ def build_job_yaml(base: Path, agent_spec: dict, gateway_url: str) -> Path:
             "delete": True,
         },
         "agents": [agent_spec],
-    }
-    job_path.write_text(yaml.safe_dump(job))
-    return job_path
+    }))
 
 
-SANDBOX_RE = re.compile(r"(sb-[0-9a-f]{16,})")
-STEP_RE = re.compile(r"step (\d+)/(\d+):")
-STEP_DONE_RE = re.compile(r"step (\d+): API responded in [\d.]+s,\s*in=(\d+)\s+out=(\d+)")
-REWARD_RE = re.compile(r"Results written to (\S+)")
+async def run_harbor(rec: JobRec, task_dir: Path, job_yaml: Path, env: dict) -> None:
+    log = rec.work_dir / "harbor.log"
+    with log.open("w") as lf:
+        proc = await asyncio.create_subprocess_exec(
+            "uv", "run", "harbor", "run",
+            "-c", str(job_yaml),
+            "-p", str(task_dir),
+            stdout=lf,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(RUNNER_DIR),
+            env=env,
+        )
+        rc = await proc.wait()
+        rec.returncode = rc
 
 
-async def handle_run(request: web.Request) -> web.StreamResponse:
+def find_trial_dir(jobs_dir: Path) -> Path | None:
+    """The first subdir of the first harbor-job dir, if any."""
+    for job in sorted(jobs_dir.iterdir()):
+        if not job.is_dir():
+            continue
+        for trial in sorted(job.iterdir()):
+            if trial.is_dir():
+                return trial
+    return None
+
+
+def peek_sandbox_id(trial_dir: Path) -> str | None:
+    log = trial_dir / "trial.log"
+    if not log.exists():
+        return None
+    try:
+        head = log.read_text(errors="replace")[:4000]
+    except Exception:
+        return None
+    m = SANDBOX_RE.search(head)
+    return m.group(1) if m else None
+
+
+def read_reward(jobs_dir: Path) -> tuple[float | None, dict | None]:
+    """Return (reward, raw_result_json) if the harbor run produced one."""
+    for job in sorted(jobs_dir.iterdir()):
+        rj = job / "result.json"
+        if not rj.exists():
+            continue
+        try:
+            data = json.loads(rj.read_text())
+        except Exception:
+            continue
+        # trial_results: list[dict] — each has "reward" and "trial_name"
+        for t in (data.get("trial_results") or []):
+            r = t.get("reward")
+            if isinstance(r, (int, float)):
+                return float(r), data
+        # fallback: top-level reward
+        r = data.get("reward")
+        if isinstance(r, (int, float)):
+            return float(r), data
+        return None, data
+    return None, None
+
+
+async def handle_run(request: web.Request) -> web.Response:
     body = await request.json()
     task = body.get("task") or {}
+    if not task.get("instruction"):
+        return web.json_response({"error": "task.instruction required"}, status=400)
     model = body.get("model", "claude-sonnet-4-6")
     max_steps = int(body.get("max_steps", 30))
     gateway_url = body.get("gateway_url") or os.environ.get("GATEWAY_URL", "http://localhost:8080")
     gateway_api_key = body.get("gateway_api_key") or os.environ.get("MMINI_API_KEY", "")
-    if not task.get("instruction"):
-        return web.json_response({"error": "task.instruction required"}, status=400)
 
-    work = Path(tempfile.mkdtemp(prefix="modelrun_"))
-    task_dir = materialize_task_dir(work, task)
-    job_yaml = build_job_yaml(work, agent_spec_for(model, max_steps), gateway_url)
-
-    resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
-    await resp.prepare(request)
-
-    async def emit(event: str, **fields):
-        await resp.write((json.dumps({"event": event, **fields}) + "\n").encode())
-
-    await emit("agent_start", model=model)
+    task_id = (body.get("task_id") or "task")[:16]
+    job_id = f"modelrun-{task_id}-{int(time.time())}"
+    work_dir = JOBS_DIR / job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    task_dir = work_dir / "task"
+    task_dir.mkdir(exist_ok=True)
+    write_task_dir(task_dir, task)
+    job_yaml = work_dir / "job.yaml"
+    write_job_yaml(job_yaml, work_dir / "jobs", agent_spec_for(model, max_steps), gateway_url)
+    (work_dir / "jobs").mkdir(exist_ok=True)
 
     env = os.environ.copy()
     if gateway_api_key:
         env["MMINI_API_KEY"] = gateway_api_key
     env["MMINI_GATEWAY_URL"] = gateway_url
 
-    proc = await asyncio.create_subprocess_exec(
-        "uv", "run", "harbor", "run",
-        "-c", str(job_yaml),
-        "-p", str(task_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(RUNNER_DIR),
-        env=env,
+    rec = JobRec(
+        job_id=job_id,
+        work_dir=work_dir,
+        task=None,  # type: ignore[arg-type]
     )
+    rec.task = asyncio.ensure_future(run_harbor(rec, task_dir, job_yaml, env))
+    JOBS[job_id] = rec
+    return web.json_response({"job_id": job_id})
 
-    assert proc.stdout is not None
-    seen_sandbox = set()
-    tail_lines: list[str] = []
-    result_path: Path | None = None
-    tokens_in_total = 0
-    tokens_out_total = 0
-    try:
-        async for raw in proc.stdout:
-            line = raw.decode(errors="replace").rstrip("\n")
-            tail_lines.append(line)
-            if len(tail_lines) > 50:
-                tail_lines = tail_lines[-50:]
 
-            m = SANDBOX_RE.search(line)
-            if m and m.group(1) not in seen_sandbox:
-                seen_sandbox.add(m.group(1))
-                await emit("sandbox_created", sandbox_id=m.group(1))
+async def handle_get_job(request: web.Request) -> web.Response:
+    job_id = request.match_info["job_id"]
+    rec = JOBS.get(job_id)
+    if rec is None:
+        return web.json_response({"error": "job not found"}, status=404)
 
-            m = STEP_RE.search(line)
-            if m:
-                await emit("agent_step", idx=int(m.group(1)), max_steps=int(m.group(2)))
+    jobs_dir = rec.work_dir / "jobs"
+    trial_dir = find_trial_dir(jobs_dir) if jobs_dir.exists() else None
+    sandbox_id = peek_sandbox_id(trial_dir) if trial_dir else None
 
-            m = STEP_DONE_RE.search(line)
-            if m:
-                tokens_in_total += int(m.group(2))
-                tokens_out_total += int(m.group(3))
+    # Build the harbor-viewer URL as a RELATIVE path from the viewer's jobs root.
+    # harbor-viewer serves /data/jobs at https://jobs.api.use.computer/ so the
+    # trial's URL is /<job_id>/jobs/<harbor-job-subdir>/<trial-subdir> (or just
+    # /<job_id>/ which lists everything).
+    trial_rel_path = None
+    if trial_dir:
+        try:
+            trial_rel_path = str(trial_dir.relative_to(JOBS_DIR))
+        except ValueError:
+            pass
 
-            m = REWARD_RE.search(line)
-            if m:
-                result_path = Path(m.group(1))
-        await proc.wait()
-    finally:
-        # Find the reward: first try the exact result.json harbor printed,
-        # then glob the jobs dir as a fallback.
-        reward = None
-        candidate_paths = [result_path] if result_path else []
-        candidate_paths += list((work / "jobs").rglob("result.json"))
-        for p in candidate_paths:
-            if not p or not p.exists():
-                continue
-            try:
-                data = json.loads(p.read_text())
-            except Exception:
-                continue
-            # Harbor writes different shapes across versions; probe a few.
-            if isinstance(data, dict):
-                if "reward" in data and isinstance(data["reward"], (int, float)):
-                    reward = float(data["reward"]); break
-                trials = data.get("trials") or []
-                rewards = [t.get("reward") for t in trials if isinstance(t.get("reward"), (int, float))]
-                if rewards:
-                    reward = float(rewards[0]); break
-                # Look for nested per-agent summaries: data["agents"][0]["reward"]
-                for agent in (data.get("agents") or []):
-                    if isinstance(agent.get("reward"), (int, float)):
-                        reward = float(agent["reward"]); break
-                if reward is not None:
-                    break
-        if proc.returncode == 0:
-            await emit(
-                "agent_done",
-                tokens_in=tokens_in_total,
-                tokens_out=tokens_out_total,
-            )
-            await emit("done", reward=reward if reward is not None else -1)
-        else:
-            # Surface harbor's tail so a failed run isn't a black box
-            await emit(
-                "error",
-                message=f"harbor exited {proc.returncode}",
-                tail="\n".join(tail_lines[-30:]),
-            )
-        shutil.rmtree(work, ignore_errors=True)
+    done = rec.task.done()
+    if not done:
+        return web.json_response({
+            "job_id": job_id,
+            "status": "running",
+            "sandbox_id": sandbox_id,
+            "trial_path": trial_rel_path,
+        })
 
-    return resp
+    # Harbor subprocess finished — decide completed vs failed.
+    if rec.task.cancelled() or (rec.task.exception() is not None):
+        err = rec.error or (str(rec.task.exception()) if rec.task.exception() else "cancelled")
+        return web.json_response({
+            "job_id": job_id,
+            "status": "failed",
+            "sandbox_id": sandbox_id,
+            "trial_path": trial_rel_path,
+            "error": err,
+        })
+
+    reward, result_json = read_reward(jobs_dir)
+    status = "completed" if rec.returncode == 0 else "failed"
+    return web.json_response({
+        "job_id": job_id,
+        "status": status,
+        "sandbox_id": sandbox_id,
+        "trial_path": trial_rel_path,
+        "reward": reward,
+        "returncode": rec.returncode,
+        # The caller may want to render a few result fields without fetching.
+        "stats": (result_json or {}).get("stats"),
+    })
 
 
 async def handle_health(_request: web.Request) -> web.Response:
@@ -233,10 +278,12 @@ async def handle_health(_request: web.Request) -> web.Response:
 def make_app() -> web.Application:
     app = web.Application()
     app.router.add_post("/run", handle_run)
+    app.router.add_get("/jobs/{job_id}", handle_get_job)
     app.router.add_get("/health", handle_health)
     return app
 
 
 if __name__ == "__main__":
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
     port = int(os.environ.get("PORT", "8090"))
     web.run_app(make_app(), host="0.0.0.0", port=port)
