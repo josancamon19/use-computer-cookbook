@@ -149,6 +149,7 @@ async def run_anthropic(
     model: str,
     max_steps: int,
     output_dir: Path,
+    cache: bool = False,
 ):
     from anthropic import Anthropic
 
@@ -189,7 +190,8 @@ async def run_anthropic(
         ],
     }]
 
-    total_in, total_out = 0, 0
+    total_in, total_out, total_cache_read, total_cache_write = 0, 0, 0, 0
+    extra: dict = {"cache_control": {"type": "ephemeral"}} if cache else {}
 
     for step in range(max_steps):
         print(f"  Step {step + 1}/{max_steps}...", end="", flush=True)
@@ -198,10 +200,17 @@ async def run_anthropic(
         response = client.beta.messages.create(
             model=model, max_tokens=4096, system=system,
             tools=[computer_tool], messages=messages, betas=[beta],
+            **extra,
         )
 
-        total_in += response.usage.input_tokens
-        total_out += response.usage.output_tokens
+        u = response.usage
+        cr = getattr(u, "cache_read_input_tokens", 0) or 0
+        cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+        total_in += u.input_tokens
+        total_out += u.output_tokens
+        total_cache_read += cr
+        total_cache_write += cw
+        print(f" [in={u.input_tokens} out={u.output_tokens} cache_r={cr} cache_w={cw}]", end="", flush=True)
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "end_turn" and not any(b.type == "tool_use" for b in response.content):
@@ -233,7 +242,7 @@ async def run_anthropic(
             messages.append({"role": "user", "content": tool_results})
         print()
 
-    print(f"  Tokens: {total_in} in / {total_out} out")
+    print(f"  Tokens: in={total_in} out={total_out} cache_read={total_cache_read} cache_write={total_cache_write}")
 
 
 async def execute_action_direct(
@@ -292,6 +301,7 @@ async def main():
     parser.add_argument("--gateway", default=GATEWAY_URL, help="Gateway URL")
     parser.add_argument("--no-grade", action="store_true", help="Skip grading")
     parser.add_argument("--events", action="store_true", help="Emit NDJSON events on stdout")
+    parser.add_argument("--cache", action="store_true", help="Enable Anthropic prompt caching (system + tools)")
     parser.add_argument("--gateway-api-key", default=None, help="Bearer token for gateway API (defaults to $GATEWAY_API_KEY)")
     args = parser.parse_args()
 
@@ -334,7 +344,7 @@ async def main():
                 print(f"\n[3] Running {args.agent} agent...")
                 _emit("agent_start", model=args.model, max_steps=args.max_steps)
                 if args.agent == "anthropic":
-                    await run_anthropic(http, sandbox_id, task["instruction"], args.model, args.max_steps, output_dir)
+                    await run_anthropic(http, sandbox_id, task["instruction"], args.model, args.max_steps, output_dir, cache=args.cache)
                 _emit("agent_done")
 
                 # Grade

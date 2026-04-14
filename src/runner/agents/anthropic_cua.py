@@ -108,14 +108,24 @@ class AnthropicCUAAgent(BaseCUAAgent):
                     tools=[computer_tool],  # type: ignore
                     messages=messages,  # type: ignore
                     betas=[beta],
+                    # Top-level cache_control is the 4.6-era API for prompt caching
+                    # (block-level cache_control on system/tools is silently ignored on 4.6).
+                    # Caches system + tools + stable message prefix; _truncate_old_screenshots
+                    # invalidates the message suffix but system+tools survive = ~60% input cost cut.
+                    cache_control={"type": "ephemeral"},
                 )
             except Exception as e:
                 self.logger.error(f"step {step_idx+1}: Anthropic API error after {_time.monotonic()-_t0:.1f}s: {type(e).__name__}: {e}")
                 raise
-            self.logger.info(f"step {step_idx+1}: API responded in {_time.monotonic()-_t0:.1f}s, in={response.usage.input_tokens} out={response.usage.output_tokens}, stop={response.stop_reason}")
+            u = response.usage
+            cache_r = getattr(u, "cache_read_input_tokens", 0) or 0
+            cache_w = getattr(u, "cache_creation_input_tokens", 0) or 0
+            self.logger.info(f"step {step_idx+1}: API responded in {_time.monotonic()-_t0:.1f}s, in={u.input_tokens} out={u.output_tokens} cache_r={cache_r} cache_w={cache_w}, stop={response.stop_reason}")
 
-            self.total_in += response.usage.input_tokens
-            self.total_out += response.usage.output_tokens
+            self.total_in += u.input_tokens
+            self.total_out += u.output_tokens
+            self._total_cache_read = getattr(self, "_total_cache_read", 0) + cache_r
+            self._total_cache_write = getattr(self, "_total_cache_write", 0) + cache_w
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "end_turn":
@@ -202,6 +212,7 @@ class AnthropicCUAAgent(BaseCUAAgent):
             self.steps.append(step_data)
 
         await self.post_run(context, model, "anthropic-cua")
+        context.n_cache_tokens = getattr(self, "_total_cache_read", 0) + getattr(self, "_total_cache_write", 0)
 
 
 def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> None:
