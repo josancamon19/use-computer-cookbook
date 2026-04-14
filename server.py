@@ -106,8 +106,10 @@ def build_job_yaml(base: Path, agent_spec: dict, gateway_url: str) -> Path:
     return job_path
 
 
-SANDBOX_RE = re.compile(r"sandbox[_ -]?id[\"'\s:=]+(sb-[0-9a-f]+)", re.IGNORECASE)
-REWARD_RE = re.compile(r"reward[\"'\s:=]+([0-9.]+)")
+SANDBOX_RE = re.compile(r"(sb-[0-9a-f]{16,})")
+STEP_RE = re.compile(r"step (\d+)/(\d+):")
+STEP_DONE_RE = re.compile(r"step (\d+): API responded in [\d.]+s,\s*in=(\d+)\s+out=(\d+)")
+REWARD_RE = re.compile(r"Results written to (\S+)")
 
 
 async def handle_run(request: web.Request) -> web.StreamResponse:
@@ -149,33 +151,76 @@ async def handle_run(request: web.Request) -> web.StreamResponse:
 
     assert proc.stdout is not None
     seen_sandbox = set()
+    tail_lines: list[str] = []
+    result_path: Path | None = None
+    tokens_in_total = 0
+    tokens_out_total = 0
     try:
         async for raw in proc.stdout:
             line = raw.decode(errors="replace").rstrip("\n")
-            # Tap anything that looks like a sandbox ID — surfaces the VNC link
-            # to the UI without needing harbor to emit structured events.
+            tail_lines.append(line)
+            if len(tail_lines) > 50:
+                tail_lines = tail_lines[-50:]
+
             m = SANDBOX_RE.search(line)
             if m and m.group(1) not in seen_sandbox:
                 seen_sandbox.add(m.group(1))
                 await emit("sandbox_created", sandbox_id=m.group(1))
+
+            m = STEP_RE.search(line)
+            if m:
+                await emit("agent_step", idx=int(m.group(1)), max_steps=int(m.group(2)))
+
+            m = STEP_DONE_RE.search(line)
+            if m:
+                tokens_in_total += int(m.group(2))
+                tokens_out_total += int(m.group(3))
+
+            m = REWARD_RE.search(line)
+            if m:
+                result_path = Path(m.group(1))
         await proc.wait()
     finally:
-        # Find the reward harbor wrote to the jobs dir
+        # Find the reward: first try the exact result.json harbor printed,
+        # then glob the jobs dir as a fallback.
         reward = None
-        for p in (work / "jobs").rglob("result.json"):
+        candidate_paths = [result_path] if result_path else []
+        candidate_paths += list((work / "jobs").rglob("result.json"))
+        for p in candidate_paths:
+            if not p or not p.exists():
+                continue
             try:
                 data = json.loads(p.read_text())
-                trials = data.get("trials") or []
-                rewards = [t.get("reward") for t in trials if t.get("reward") is not None]
-                if rewards:
-                    reward = rewards[0]
-                    break
             except Exception:
                 continue
+            # Harbor writes different shapes across versions; probe a few.
+            if isinstance(data, dict):
+                if "reward" in data and isinstance(data["reward"], (int, float)):
+                    reward = float(data["reward"]); break
+                trials = data.get("trials") or []
+                rewards = [t.get("reward") for t in trials if isinstance(t.get("reward"), (int, float))]
+                if rewards:
+                    reward = float(rewards[0]); break
+                # Look for nested per-agent summaries: data["agents"][0]["reward"]
+                for agent in (data.get("agents") or []):
+                    if isinstance(agent.get("reward"), (int, float)):
+                        reward = float(agent["reward"]); break
+                if reward is not None:
+                    break
         if proc.returncode == 0:
+            await emit(
+                "agent_done",
+                tokens_in=tokens_in_total,
+                tokens_out=tokens_out_total,
+            )
             await emit("done", reward=reward if reward is not None else -1)
         else:
-            await emit("error", message=f"harbor exited {proc.returncode}")
+            # Surface harbor's tail so a failed run isn't a black box
+            await emit(
+                "error",
+                message=f"harbor exited {proc.returncode}",
+                tail="\n".join(tail_lines[-30:]),
+            )
         shutil.rmtree(work, ignore_errors=True)
 
     return resp
