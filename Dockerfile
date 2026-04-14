@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir --upgrade pip \
        httpx>=0.27.0
 
 COPY run.py server.py /app/
+COPY src/runner/agents/prompts /app/src/runner/agents/prompts
 
 EXPOSE 8090
 CMD ["python", "server.py"]
