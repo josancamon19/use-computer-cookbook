@@ -1,16 +1,20 @@
 FROM python:3.12-slim
-WORKDIR /app
 
-# Slim deps — only what run.py / server.py actually need for the
-# sonnet/anthropic path. No uv, no harbor, no mmini, no litellm.
-RUN pip install --no-cache-dir --upgrade pip \
-  && pip install --no-cache-dir \
-       aiohttp==3.10.10 \
-       anthropic>=0.86.0 \
-       httpx>=0.27.0
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git curl ca-certificates build-essential \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY run.py server.py /app/
-COPY src/runner/agents/prompts /app/src/runner/agents/prompts
+RUN pip install --no-cache-dir uv
+
+# Build context is the deploy dir (see docker-compose.yml). Copy runner + sdk
+# so pyproject's editable path dep (`mmini = { path = "../sdk" }`) resolves.
+COPY runner /repo/runner
+COPY sdk /repo/sdk
+
+WORKDIR /repo/runner
+RUN uv sync --frozen
+# aiohttp / pyyaml for the thin HTTP shim; everything else comes via uv sync
+RUN uv pip install aiohttp==3.10.10 pyyaml
 
 EXPOSE 8090
-CMD ["python", "server.py"]
+CMD ["uv", "run", "python", "server.py"]

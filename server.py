@@ -1,106 +1,182 @@
 """
-Minimal HTTP sidecar that wraps run.py.
+Minimal HTTP sidecar: POST /run drives a single task through `harbor run`,
+streaming NDJSON events back. No custom agent loop — harbor loads
+AnthropicCUAAgent or GenericCUAAgent from the runner package based on model.
 
-  POST /run   — body JSON: {task: {instruction, pre_command, grading_command},
-                             model, agent?, max_steps?, gateway_url?}
-                response: streaming NDJSON events, one per line
-
-Events mirror run.py --events output (sandbox_created / pre_command_* /
-agent_step / agent_done / grading_done / done / error).
+  POST /run   body: {task: {instruction, pre_command, grading_command},
+                     model, gateway_url, gateway_api_key, max_steps?}
+              response: application/x-ndjson stream of events
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import re
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
+import yaml
 from aiohttp import web
 
-RUNNER_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path("/repo")
+RUNNER_DIR = REPO_ROOT / "runner"
+
+
+def agent_spec_for(model: str, max_steps: int = 30) -> dict:
+    """Pick a CUA agent class based on model name."""
+    if "kimi" in model or "moonshot" in model or model.startswith("openai/"):
+        return {
+            "import_path": "runner.agents.generic_cua:GenericCUAAgent",
+            "model_name": model if "/" in model else f"openai/{model}",
+            "kwargs": {
+                "max_steps": max_steps,
+                "max_tokens": 4096,
+                "api_base": "https://api.fireworks.ai/inference/v1",
+            },
+        }
+    # default: Anthropic CUA (Sonnet 4.6, Opus 4.6, etc.)
+    return {
+        "import_path": "runner.agents.anthropic_cua:AnthropicCUAAgent",
+        "model_name": model if "/" in model else f"anthropic/{model}",
+        "kwargs": {"max_steps": max_steps},
+    }
+
+
+def materialize_task_dir(base: Path, task: dict) -> Path:
+    """Write a collected task as a harbor task layout that `harbor run -p` can load."""
+    task_dir = base / "task"
+    (task_dir / "tests" / "setup").mkdir(parents=True, exist_ok=True)
+    (task_dir / "environment").mkdir(exist_ok=True)
+
+    (task_dir / "instruction.md").write_text(task.get("instruction", ""))
+    (task_dir / "task.toml").write_text(
+        "[metadata]\n"
+        "author_name = \"mmini-collect\"\n"
+        "difficulty = \"unknown\"\n"
+        "\n[verifier]\ntimeout_sec = 1800\n"
+        "\n[agent]\ntimeout_sec = 1800\n"
+        "\n[environment]\ncpus = 4\nmemory_mb = 8192\nallow_internet = true\n"
+    )
+    # Grader script — mirrors the shape in datasets/macosworld_ready/*/tests/test.sh
+    graders = task.get("grading_command", [])
+    grader_sh = "#!/bin/bash\n# auto-generated from collected task\nset +e\n"
+    grader_sh += 'PREFIX=""\n[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"\n'
+    grader_sh += 'REWARD="${PREFIX}/logs/verifier/reward.txt"\n'
+    if not graders:
+        # No grader = assume pass (harbor requires something)
+        grader_sh += 'echo "1" > "$REWARD"; echo "Score: 1"; exit 0\n'
+    else:
+        # Each entry is [cmd, weight]; treat as AND of all being True
+        for cmd, _weight in graders:
+            grader_sh += f"if ! bash -c {json.dumps(cmd)} 2>/dev/null | grep -qi 'true'; then echo '0' > \"$REWARD\"; echo 'Score: 0'; exit 0; fi\n"
+        grader_sh += 'echo "1" > "$REWARD"; echo "Score: 1"; exit 0\n'
+    (task_dir / "tests" / "test.sh").write_text(grader_sh)
+    (task_dir / "tests" / "test.sh").chmod(0o755)
+
+    # pre_command.sh + config.json under tests/setup/ — harbor executes these in-VM
+    pre = task.get("pre_command", "") or ""
+    if pre:
+        (task_dir / "tests" / "setup" / "pre_command.sh").write_text(
+            "#!/bin/bash\n" + pre + "\n"
+        )
+        (task_dir / "tests" / "setup" / "pre_command.sh").chmod(0o755)
+    (task_dir / "tests" / "setup" / "config.json").write_text(json.dumps({
+        "before_action_delay_seconds": task.get("before_action_delay_seconds", 5),
+        "before_grading_delay_seconds": task.get("before_grading_delay_seconds", 5),
+    }))
+    return task_dir
+
+
+def build_job_yaml(base: Path, agent_spec: dict, gateway_url: str) -> Path:
+    job_path = base / "job.yaml"
+    job = {
+        "jobs_dir": str(base / "jobs"),
+        "n_attempts": 1,
+        "orchestrator": {"type": "local", "n_concurrent_trials": 1},
+        "environment": {
+            "import_path": "runner.environments.mmini:MminiEnvironment",
+            "kwargs": {"gateway_url": gateway_url},
+            "delete": True,
+        },
+        "agents": [agent_spec],
+    }
+    job_path.write_text(yaml.safe_dump(job))
+    return job_path
+
+
+SANDBOX_RE = re.compile(r"sandbox[_ -]?id[\"'\s:=]+(sb-[0-9a-f]+)", re.IGNORECASE)
+REWARD_RE = re.compile(r"reward[\"'\s:=]+([0-9.]+)")
 
 
 async def handle_run(request: web.Request) -> web.StreamResponse:
     body = await request.json()
     task = body.get("task") or {}
     model = body.get("model", "claude-sonnet-4-6")
-    agent = body.get("agent", "anthropic")
     max_steps = int(body.get("max_steps", 30))
-    gateway_url = body.get("gateway_url") or os.environ.get(
-        "GATEWAY_URL", "http://localhost:8080"
-    )
-    gateway_api_key = body.get("gateway_api_key") or os.environ.get("GATEWAY_API_KEY", "")
-
-    instruction = task.get("instruction", "")
-    if not instruction:
+    gateway_url = body.get("gateway_url") or os.environ.get("GATEWAY_URL", "http://localhost:8080")
+    gateway_api_key = body.get("gateway_api_key") or os.environ.get("MMINI_API_KEY", "")
+    if not task.get("instruction"):
         return web.json_response({"error": "task.instruction required"}, status=400)
 
-    task_dir = Path(tempfile.mkdtemp(prefix="run_"))
-    (task_dir / "instruction.md").write_text(instruction)
-    tests_dir = task_dir / "tests"
-    tests_dir.mkdir()
-    config = {
-        "pre_command": task.get("pre_command", ""),
-        "before_action_delay_seconds": task.get("before_action_delay_seconds", 5),
-        "grading_command": task.get("grading_command", []),
-        "before_grading_delay_seconds": task.get("before_grading_delay_seconds", 2),
-    }
-    (tests_dir / "task_config.json").write_text(json.dumps(config))
+    work = Path(tempfile.mkdtemp(prefix="modelrun_"))
+    task_dir = materialize_task_dir(work, task)
+    job_yaml = build_job_yaml(work, agent_spec_for(model, max_steps), gateway_url)
 
-    resp = web.StreamResponse(
-        status=200,
-        headers={"Content-Type": "application/x-ndjson"},
-    )
+    resp = web.StreamResponse(status=200, headers={"Content-Type": "application/x-ndjson"})
     await resp.prepare(request)
 
-    argv = [
-        sys.executable,
-        str(RUNNER_DIR / "run.py"),
-        "--task-dir", str(task_dir),
-        "--agent", agent,
-        "--model", model,
-        "--max-steps", str(max_steps),
-        "--gateway", gateway_url,
-        "--events",
-    ]
-    if gateway_api_key:
-        argv += ["--gateway-api-key", gateway_api_key]
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(RUNNER_DIR),
-    )
-    assert proc.stdout is not None
+    async def emit(event: str, **fields):
+        await resp.write((json.dumps({"event": event, **fields}) + "\n").encode())
 
+    await emit("agent_start", model=model)
+
+    env = os.environ.copy()
+    if gateway_api_key:
+        env["MMINI_API_KEY"] = gateway_api_key
+    env["MMINI_GATEWAY_URL"] = gateway_url
+
+    proc = await asyncio.create_subprocess_exec(
+        "uv", "run", "harbor", "run",
+        "-c", str(job_yaml),
+        "-p", str(task_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=str(RUNNER_DIR),
+        env=env,
+    )
+
+    assert proc.stdout is not None
+    seen_sandbox = set()
     try:
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            # Only forward lines that parse as JSON — human-readable prose
-            # from the prints in run.py gets dropped.
-            try:
-                json.loads(line)
-            except ValueError:
-                continue
-            await resp.write(line)
+        async for raw in proc.stdout:
+            line = raw.decode(errors="replace").rstrip("\n")
+            # Tap anything that looks like a sandbox ID — surfaces the VNC link
+            # to the UI without needing harbor to emit structured events.
+            m = SANDBOX_RE.search(line)
+            if m and m.group(1) not in seen_sandbox:
+                seen_sandbox.add(m.group(1))
+                await emit("sandbox_created", sandbox_id=m.group(1))
         await proc.wait()
-        if proc.returncode and proc.returncode != 0:
-            err = ""
-            if proc.stderr is not None:
-                try:
-                    err = (await proc.stderr.read()).decode(errors="replace")
-                except Exception:
-                    pass
-            await resp.write(
-                (json.dumps({"event": "error", "message": f"runner exited {proc.returncode}: {err[:400]}"}) + "\n").encode()
-            )
     finally:
-        shutil.rmtree(task_dir, ignore_errors=True)
+        # Find the reward harbor wrote to the jobs dir
+        reward = None
+        for p in (work / "jobs").rglob("result.json"):
+            try:
+                data = json.loads(p.read_text())
+                trials = data.get("trials") or []
+                rewards = [t.get("reward") for t in trials if t.get("reward") is not None]
+                if rewards:
+                    reward = rewards[0]
+                    break
+            except Exception:
+                continue
+        if proc.returncode == 0:
+            await emit("done", reward=reward if reward is not None else -1)
+        else:
+            await emit("error", message=f"harbor exited {proc.returncode}")
+        shutil.rmtree(work, ignore_errors=True)
 
     return resp
 
