@@ -33,19 +33,30 @@ class GenericCUAAgent(BaseCUAAgent):
         max_tokens: int = 4096,
         api_key: str | None = None,
         api_base: str | None = None,
+        coord_mode: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
         self._prompt_template = load_prompt(prompt_template)
         self._llm_backend = llm_backend
         self._max_tokens = max_tokens
-        # If api_base points at Fireworks, fall back to FIREWORKS_API_KEY env var.
+        # Fall back to provider-specific API key env vars.
         # litellm with openai/* prefix would otherwise look for OPENAI_API_KEY.
-        if api_key is None and api_base and "fireworks" in api_base:
-            api_key = os.environ.get("FIREWORKS_API_KEY")
+        if api_key is None and api_base:
+            if "fireworks" in api_base:
+                api_key = os.environ.get("FIREWORKS_API_KEY")
+            elif "lilac" in api_base:
+                api_key = os.environ.get("LILAC_API_KEY")
         self._api_key = api_key
         self._api_base = api_base
         self._tinker_llm = None
+        # Coordinate convention emitted by the model:
+        #   "api_pixel"        — Kimi default: 0..1 floats OR pixel ints in API space (1280x800)
+        #   "normalized_1000"  — Qwen-VL default: 0..1000 ints as per-mille of screen
+        # Auto-detect: qwen uses per-mille, everything else is Kimi-style.
+        if coord_mode is None:
+            coord_mode = "normalized_1000" if model_name and "qwen" in model_name.lower() else "api_pixel"
+        self._coord_mode = coord_mode
 
     @staticmethod
     def name() -> str:
@@ -115,8 +126,15 @@ class GenericCUAAgent(BaseCUAAgent):
         # coords for the wrong space. We then scale model coords back to VM
         # pixel space before clicking. (Mirrors anthropic_cua.)
         api_w, api_h = 1280, 800
-        sx = self.screen_width / api_w
-        sy = self.screen_height / api_h
+        # Coordinate space the model emits in. Qwen-VL ignores prompt size and
+        # emits 0..1000 per-mille coords regardless, so we parse against that
+        # space and scale directly to VM pixels.
+        if self._coord_mode == "normalized_1000":
+            coord_w, coord_h = 1000, 1000
+        else:
+            coord_w, coord_h = api_w, api_h
+        sx = self.screen_width / coord_w
+        sy = self.screen_height / coord_h
 
         def _resize_for_api(png_bytes: bytes) -> bytes:
             """Resize and re-encode as JPEG q80. JPEG is ~17x smaller than PNG
@@ -131,7 +149,7 @@ class GenericCUAAgent(BaseCUAAgent):
             return buf.getvalue()
 
         def _scale_action(a: dict[str, Any]) -> dict[str, Any]:
-            """Scale a parsed action's coordinates from API space (1280x800) to VM space."""
+            """Scale a parsed action's coordinates from model coord space to VM space."""
             for field in ("coordinate", "start_coordinate"):
                 if field in a and isinstance(a[field], list) and len(a[field]) == 2:
                     a[field] = [int(a[field][0] * sx), int(a[field][1] * sy)]
@@ -201,9 +219,9 @@ class GenericCUAAgent(BaseCUAAgent):
                 continue
 
             all_code = "\n".join(code_blocks)
-            # Parse using API dims (1280x800) — the model thinks that's the screen.
-            # Then scale each coordinate up to VM pixel space.
-            actions = _parse_pyautogui(all_code, api_w, api_h)
+            # Parse using the model's coord space (API px for Kimi, per-mille for Qwen),
+            # then scale each coord to VM pixels.
+            actions = _parse_pyautogui(all_code, coord_w, coord_h)
             actions = [_scale_action(a) for a in actions]
 
             last_ss_path: str | None = None
