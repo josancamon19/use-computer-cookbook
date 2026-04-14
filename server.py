@@ -158,25 +158,25 @@ def peek_sandbox_id(trial_dir: Path) -> str | None:
 
 
 def read_reward(jobs_dir: Path) -> tuple[float | None, dict | None]:
-    """Return (reward, raw_result_json) if the harbor run produced one."""
-    for job in sorted(jobs_dir.iterdir()):
-        rj = job / "result.json"
-        if not rj.exists():
-            continue
+    """Return (reward, raw_result_json). Harbor writes per-trial result.json
+    with verifier_result.rewards.reward. We glob over the whole jobs dir so
+    this works regardless of the harbor-job subdir name."""
+    for rj in sorted(jobs_dir.rglob("result.json")):
         try:
             data = json.loads(rj.read_text())
         except Exception:
             continue
-        # trial_results: list[dict] — each has "reward" and "trial_name"
+        # Trial-level shape: verifier_result.rewards.reward
+        vr = data.get("verifier_result") or {}
+        rewards = vr.get("rewards") or {}
+        r = rewards.get("reward")
+        if isinstance(r, (int, float)):
+            return float(r), data
+        # Job-level shape: trial_results[].reward (older harbor versions)
         for t in (data.get("trial_results") or []):
             r = t.get("reward")
             if isinstance(r, (int, float)):
                 return float(r), data
-        # fallback: top-level reward
-        r = data.get("reward")
-        if isinstance(r, (int, float)):
-            return float(r), data
-        return None, data
     return None, None
 
 
