@@ -30,6 +30,16 @@ GATEWAY_URL = "http://localhost:8080"
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 
+# When true, key lifecycle moments are also emitted as NDJSON on stdout so a
+# wrapping process (e.g. the runner HTTP sidecar / gateway) can track live
+# state. The human-readable prints are left in place for CLI users.
+EMIT_EVENTS = False
+
+
+def _emit(event: str, **fields) -> None:
+    if EMIT_EVENTS:
+        print(json.dumps({"event": event, **fields}), flush=True)
+
 
 def pick_task(pattern: str | None) -> Path:
     tasks = sorted(DATASETS_DIR.iterdir()) if DATASETS_DIR.exists() else []
@@ -183,6 +193,7 @@ async def run_anthropic(
 
     for step in range(max_steps):
         print(f"  Step {step + 1}/{max_steps}...", end="", flush=True)
+        _emit("agent_step", idx=step + 1)
 
         response = client.beta.messages.create(
             model=model, max_tokens=4096, system=system,
@@ -274,14 +285,19 @@ async def execute_action_direct(
 async def main():
     parser = argparse.ArgumentParser(description="Run a single macOSWorld task")
     parser.add_argument("--task", "-t", help="Task name or glob pattern")
+    parser.add_argument("--task-dir", help="Absolute path to a task dir (bypasses dataset lookup)")
     parser.add_argument("--agent", "-a", default="anthropic", choices=["anthropic"], help="Agent type")
     parser.add_argument("--model", "-m", default="claude-sonnet-4-6", help="Model name")
     parser.add_argument("--max-steps", type=int, default=50, help="Max agent steps")
     parser.add_argument("--gateway", default=GATEWAY_URL, help="Gateway URL")
     parser.add_argument("--no-grade", action="store_true", help="Skip grading")
+    parser.add_argument("--events", action="store_true", help="Emit NDJSON events on stdout")
     args = parser.parse_args()
 
-    task_dir = pick_task(args.task)
+    global EMIT_EVENTS
+    EMIT_EVENTS = args.events
+
+    task_dir = Path(args.task_dir) if args.task_dir else pick_task(args.task)
     task = load_task(task_dir)
     print(f"\n{'='*60}")
     print(f"Task:  {task_dir.name}")
@@ -292,36 +308,50 @@ async def main():
     output_dir = RESULTS_DIR / f"{task_dir.name}_{int(time.time())}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    async with httpx.AsyncClient(base_url=args.gateway, timeout=300) as http:
-        # Create sandbox
-        print("\n[1] Creating sandbox...")
-        resp = await http.post("/v1/sandboxes?wait=true")
-        resp.raise_for_status()
-        sandbox_id = resp.json()["sandbox_id"]
-        print(f"  sandbox: {sandbox_id}")
+    try:
+        async with httpx.AsyncClient(base_url=args.gateway, timeout=300) as http:
+            # Create sandbox
+            print("\n[1] Creating sandbox...")
+            resp = await http.post("/v1/sandboxes?wait=true")
+            resp.raise_for_status()
+            sandbox_id = resp.json()["sandbox_id"]
+            print(f"  sandbox: {sandbox_id}")
+            _emit("sandbox_created", sandbox_id=sandbox_id)
 
-        try:
-            # Run pre_command
-            print("\n[2] Setting up task environment...")
-            await run_pre_command(http, sandbox_id, task["config"])
+            try:
+                # Run pre_command
+                print("\n[2] Setting up task environment...")
+                _emit("pre_command_start")
+                await run_pre_command(http, sandbox_id, task["config"])
+                _emit("pre_command_done")
 
-            # Run agent
-            print(f"\n[3] Running {args.agent} agent...")
-            if args.agent == "anthropic":
-                await run_anthropic(http, sandbox_id, task["instruction"], args.model, args.max_steps, output_dir)
+                # Run agent
+                print(f"\n[3] Running {args.agent} agent...")
+                _emit("agent_start", model=args.model, max_steps=args.max_steps)
+                if args.agent == "anthropic":
+                    await run_anthropic(http, sandbox_id, task["instruction"], args.model, args.max_steps, output_dir)
+                _emit("agent_done")
 
-            # Grade
-            if not args.no_grade:
-                print("\n[4] Grading...")
-                score = await run_grading(http, sandbox_id, task["config"])
-                print(f"\n  Score: {score:.0%}")
-                (output_dir / "score.txt").write_text(f"{score}\n")
+                # Grade
+                score = None
+                if not args.no_grade:
+                    print("\n[4] Grading...")
+                    _emit("grading_start")
+                    score = await run_grading(http, sandbox_id, task["config"])
+                    print(f"\n  Score: {score:.0%}")
+                    (output_dir / "score.txt").write_text(f"{score}\n")
+                    _emit("grading_done", reward=score)
 
-        finally:
-            print("\n[5] Destroying sandbox...")
-            await http.delete(f"/v1/sandboxes/{sandbox_id}")
+                _emit("done", reward=score if score is not None else -1)
 
-    print(f"\nResults saved to {output_dir}/")
+            finally:
+                print("\n[5] Destroying sandbox...")
+                await http.delete(f"/v1/sandboxes/{sandbox_id}")
+
+        print(f"\nResults saved to {output_dir}/")
+    except Exception as e:
+        _emit("error", message=str(e))
+        raise
 
 
 if __name__ == "__main__":
