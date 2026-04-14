@@ -128,6 +128,7 @@ class OpenAICUAAgent(BaseCUAAgent):
                         ],
                     }
                 self.steps.append(step_data)
+                self.checkpoint(context, model, "openai-cua")
 
                 if ss_bytes:
                     b64 = base64.b64encode(ss_bytes).decode()

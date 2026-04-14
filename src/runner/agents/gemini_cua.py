@@ -317,5 +317,6 @@ class GeminiCUAAgent(BaseCUAAgent):
             if obs_results:
                 step_data["observation"] = {"results": obs_results}
             self.steps.append(step_data)
+            self.checkpoint(context, model, "gemini-cua")
 
         await self.post_run(context, model, "gemini-cua")

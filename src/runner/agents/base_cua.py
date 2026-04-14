@@ -260,15 +260,24 @@ class BaseCUAAgent(BaseAgent):
         if fn:
             await fn(step_idx)
 
-    async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
-        """Common teardown: stop recording, write trajectory, set token counts."""
-        assert self.sandbox is not None
-        # await self.stop_recording(self.sandbox)
+    def checkpoint(self, context: AgentContext, model: str, agent_name: str) -> None:
+        """Persist trajectory + update AgentContext fields. Safe to call per step.
+        Ensures partial state survives harbor's asyncio cancellation at agent_timeout_sec —
+        otherwise result.json ends up with empty agent_result (no tokens, no rollout)."""
         write_trajectory(
             self.logs_dir, self.steps, self.total_in, self.total_out, model, agent_name
         )
         context.n_input_tokens = self.total_in
         context.n_output_tokens = self.total_out
+        context.n_cache_tokens = (
+            getattr(self, "_total_cache_read", 0) + getattr(self, "_total_cache_write", 0)
+        )
+
+    async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
+        """Common teardown: stop recording, write trajectory, set token counts."""
+        assert self.sandbox is not None
+        # await self.stop_recording(self.sandbox)
+        self.checkpoint(context, model, agent_name)
 
     async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:
         try:

@@ -210,9 +210,9 @@ class AnthropicCUAAgent(BaseCUAAgent):
             if obs_results:
                 step_data["observation"] = {"results": obs_results}
             self.steps.append(step_data)
+            self.checkpoint(context, model, "anthropic-cua")
 
         await self.post_run(context, model, "anthropic-cua")
-        context.n_cache_tokens = getattr(self, "_total_cache_read", 0) + getattr(self, "_total_cache_write", 0)
 
 
 def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> None:

@@ -254,6 +254,7 @@ class GenericCUAAgent(BaseCUAAgent):
                     ],
                 }
             self.steps.append(step_data)
+            self.checkpoint(context, model, "generic-cua")
 
             if not actions:
                 ss = await sandbox.screenshot.take_full_screen()
