@@ -347,10 +347,37 @@ class MminiEnvironment(BaseEnvironment):
                 result = await self.sandbox.exec_ax(full_cmd, timeout=timeout)
             else:
                 result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
-        if "test.sh" in full_cmd or "_ax_" in full_cmd:
-            self.logger.info(f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
+        # rc=-14 is SIGALRM — our perl-alarm wrapper killed the inner command
+        # before it finished. When this happens on a verifier exec, the trial's
+        # reward.txt keeps the "0" written at setup, and the trial looks like
+        # a plain task failure in result.json. Shout it loudly so post-hoc
+        # log grep can separate "agent failed the task" from "verifier hung
+        # and got killed".
+        is_verifier = "test.sh" in full_cmd or "_ax_" in full_cmd
+        alarm_killed = result.return_code == -14
+        if is_verifier and alarm_killed:
+            self.logger.warning(
+                f"verifier ALARM-KILLED after {t.elapsed:.1f}s (timeout={timeout}s) — "
+                f"reward=0.0 is a verifier hang, NOT a task failure. cmd={full_cmd[:120]}"
+            )
+            # Drop a marker in the trial's verifier dir so artifact collection
+            # picks it up. Fire-and-forget via exec_ssh (a new 5s-wrapped exec),
+            # not exec_ax — we don't want another hang inside a hang.
+            try:
+                await self.sandbox.exec_ssh(
+                    "touch /tmp/harbor/logs/verifier/alarm-killed.marker",
+                    timeout=5,
+                )
+            except Exception as exc:  # best-effort, don't fail the trial on it
+                self.logger.debug(f"alarm-killed marker write failed: {exc}")
+        elif is_verifier:
+            self.logger.info(
+                f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
+            )
         else:
-            self.logger.debug(f"exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
+            self.logger.debug(
+                f"exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
+            )
         return ExecResult(
             stdout=result.stdout, stderr=None, return_code=result.return_code
         )
