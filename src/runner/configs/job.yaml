@@ -2,17 +2,17 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 32
+    n_concurrent_trials: 24
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
         gateway_url: "http://10.10.10.2:8080"
     delete: true
 agents:
-    # - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
-    #   model_name: "anthropic/claude-sonnet-4-6"
-    #   kwargs:
-    #       max_steps: 20
+    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 20
     # - import_path: "runner.agents.debug_cua:DebugCUAAgent"
     #   model_name: "debug"
     #   kwargs:
@@ -24,7 +24,6 @@ agents:
           max_steps: 20
           max_tokens: 4096
           api_base: "https://api.fireworks.ai/inference/v1"
-
     - import_path: "runner.agents.generic_cua:GenericCUAAgent"
       model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
       kwargs:
