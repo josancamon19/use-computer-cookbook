@@ -32,6 +32,7 @@ async def handle_run(request: web.Request) -> web.StreamResponse:
     gateway_url = body.get("gateway_url") or os.environ.get(
         "GATEWAY_URL", "http://localhost:8080"
     )
+    gateway_api_key = body.get("gateway_api_key") or os.environ.get("GATEWAY_API_KEY", "")
 
     instruction = task.get("instruction", "")
     if not instruction:
@@ -55,7 +56,7 @@ async def handle_run(request: web.Request) -> web.StreamResponse:
     )
     await resp.prepare(request)
 
-    proc = await asyncio.create_subprocess_exec(
+    argv = [
         sys.executable,
         str(RUNNER_DIR / "run.py"),
         "--task-dir", str(task_dir),
@@ -64,6 +65,11 @@ async def handle_run(request: web.Request) -> web.StreamResponse:
         "--max-steps", str(max_steps),
         "--gateway", gateway_url,
         "--events",
+    ]
+    if gateway_api_key:
+        argv += ["--gateway-api-key", gateway_api_key]
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(RUNNER_DIR),

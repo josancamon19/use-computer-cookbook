@@ -292,10 +292,15 @@ async def main():
     parser.add_argument("--gateway", default=GATEWAY_URL, help="Gateway URL")
     parser.add_argument("--no-grade", action="store_true", help="Skip grading")
     parser.add_argument("--events", action="store_true", help="Emit NDJSON events on stdout")
+    parser.add_argument("--gateway-api-key", default=None, help="Bearer token for gateway API (defaults to $GATEWAY_API_KEY)")
     args = parser.parse_args()
 
     global EMIT_EVENTS
     EMIT_EVENTS = args.events
+
+    import os as _os
+    api_key = args.gateway_api_key or _os.environ.get("GATEWAY_API_KEY", "")
+    auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     task_dir = Path(args.task_dir) if args.task_dir else pick_task(args.task)
     task = load_task(task_dir)
@@ -309,7 +314,7 @@ async def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with httpx.AsyncClient(base_url=args.gateway, timeout=300) as http:
+        async with httpx.AsyncClient(base_url=args.gateway, timeout=300, headers=auth_headers) as http:
             # Create sandbox
             print("\n[1] Creating sandbox...")
             resp = await http.post("/v1/sandboxes?wait=true")
