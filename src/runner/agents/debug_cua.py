@@ -94,9 +94,12 @@ class DebugCUAAgent(BaseCUAAgent):
         """One step: screenshot + REAL_ACTIONS_PER_STEP canonical actions + exec.
         Fully deterministic — same step number always runs the same actions."""
 
-        # Screenshot (always) — 1-2MB response, the bandwidth-dominant call
+        # Screenshot (always fetched — exercises the bandwidth-dominant call)
+        # but only persisted every 10 steps so long trials don't blow disk.
+        # Filmstrip in the viewer still shows the trajectory shape.
         ss = await sandbox.screenshot.take_full_screen()
-        (self.images_dir / f"step_{step:03d}.png").write_bytes(ss)
+        if step == 1 or step % 10 == 0 or step == self.max_steps:
+            (self.images_dir / f"step_{step:03d}.png").write_bytes(ss)
 
         # Pick actions for this step by rotating through ACTION_POOL
         start = ((step - 1) * REAL_ACTIONS_PER_STEP) % len(ACTION_POOL)

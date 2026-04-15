@@ -15,8 +15,9 @@ agents:
     #       max_steps: 20
     - import_path: "runner.agents.debug_cua:DebugCUAAgent"
       model_name: "debug"
+      override_timeout_sec: 2400   # 40 min — gives the 30-min-target trial headroom over harbor's 30-min default
       kwargs:
-          max_steps: 20
+          max_steps: 120        # 120 × ~15s/step ≈ 30 min trial
           realistic: true
 
     # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
