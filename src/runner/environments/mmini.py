@@ -153,7 +153,7 @@ class MminiEnvironment(BaseEnvironment):
         # mmini.ax_transpile for the why and the supported patterns.
         test_script = self._task_dir / "tests" / "test.sh"
         if test_script.exists():
-            from mmini.ax_transpile import transpile
+            from mmini.ax_transpile import transpile, needs_exec_ax, PRE_COMMAND_OSASCRIPT_TIMEOUT_S
 
             raw = test_script.read_text()
             rewritten, n = transpile(raw)
@@ -186,11 +186,17 @@ class MminiEnvironment(BaseEnvironment):
             for i, line in enumerate(lines):
                 # Transpile osascript AX patterns (e.g. keystroke) and route
                 # through exec_ax when needed — same as test.sh but per-line.
-                transpiled_line, n = transpile(line)
+                transpiled_line, n = transpile(line, fallback_timeout_s=PRE_COMMAND_OSASCRIPT_TIMEOUT_S)
                 if n > 0:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}] (transpiled {n}): {line[:80]}")
                     self.logger.info(f"  transpiled: {transpiled_line[:300]!r}")
-                    result = await self._exec_ax(transpiled_line)
+                    # Only ax_helper emissions need exec_ax (TCC Accessibility via
+                    # cua-server). Fallback osascript-with-timeout runs directly in
+                    # bash and works via regular exec without the 30s hard limit.
+                    if needs_exec_ax(transpiled_line):
+                        result = await self._exec_ax(transpiled_line)
+                    else:
+                        result = await self.exec(transpiled_line)
                 else:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
                     result = await self.exec(line)
