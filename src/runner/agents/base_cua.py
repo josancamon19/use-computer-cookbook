@@ -247,7 +247,7 @@ class BaseCUAAgent(BaseAgent):
         if sandbox is None:
             raise RuntimeError("CUA agents require an environment with a .sandbox property")
         self.sandbox = sandbox
-        # await self.start_recording(sandbox)
+        await self.start_recording(sandbox)
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.steps = [{"step_id": 1, "source": "user", "message": ""}]
         self.total_in = 0
@@ -276,7 +276,7 @@ class BaseCUAAgent(BaseAgent):
     async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
         """Common teardown: stop recording, write trajectory, set token counts."""
         assert self.sandbox is not None
-        # await self.stop_recording(self.sandbox)
+        await self.stop_recording(self.sandbox)
         self.checkpoint(context, model, agent_name)
 
     async def start_recording(self, sandbox: AsyncMacOSSandbox) -> None:

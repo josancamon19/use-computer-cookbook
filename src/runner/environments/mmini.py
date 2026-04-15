@@ -163,6 +163,9 @@ class MminiEnvironment(BaseEnvironment):
                 staged = self.trial_paths.trial_dir / ".test.transpiled.sh"
                 staged.write_text(rewritten)
                 self.logger.info(f"uploading test.sh (transpiled {n} AX call(s))")
+                # Preview shows what actually shipped — debugging a hung trial
+                # otherwise requires re-deriving transpiler output.
+                self.logger.info(f"  transpiled preview: {rewritten[:300]!r}")
                 await self.upload_file(staged, "/tests/test.sh")
             else:
                 self.logger.info("uploading test.sh")
@@ -186,6 +189,7 @@ class MminiEnvironment(BaseEnvironment):
                 transpiled_line, n = transpile(line)
                 if n > 0:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}] (transpiled {n}): {line[:80]}")
+                    self.logger.info(f"  transpiled: {transpiled_line[:300]!r}")
                     result = await self._exec_ax(transpiled_line)
                 else:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")

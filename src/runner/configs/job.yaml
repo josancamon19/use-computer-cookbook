@@ -2,34 +2,35 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 24
+    n_concurrent_trials: 70
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
         gateway_url: "http://10.10.10.2:8080"
     delete: true
 agents:
-    - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
-      model_name: "anthropic/claude-sonnet-4-6"
-      kwargs:
-          max_steps: 20
-    # - import_path: "runner.agents.debug_cua:DebugCUAAgent"
-    #   model_name: "debug"
+    # - import_path: "runner.agents.anthropic_cua:AnthropicCUAAgent"
+    #   model_name: "anthropic/claude-sonnet-4-6"
     #   kwargs:
-    #       max_steps: 1
+    #       max_steps: 20
+    - import_path: "runner.agents.debug_cua:DebugCUAAgent"
+      model_name: "debug"
+      kwargs:
+          max_steps: 20
+          realistic: true
 
-    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
-      kwargs:
-          max_steps: 20
-          max_tokens: 4096
-          api_base: "https://api.fireworks.ai/inference/v1"
-    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
-      kwargs:
-          max_steps: 20
-          max_tokens: 4096
-          api_base: "https://api.fireworks.ai/inference/v1"
+    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
+    # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
 
     # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
     #   model_name: "openai/moonshotai/kimi-k2.5" # lilac
@@ -39,6 +40,7 @@ agents:
     #       api_base: "https://api.getlilac.com/v1"
 datasets:
     - path: datasets/macosworld_ready
+      n_tasks: 70   # max-concurrency stress: 70 tasks × 70 concurrent = 1 trial / slot, full parallel
       # task_names:
       #     - sys_apps__4a89fe83-8a93-ecd4-7841-c0bb470571c2
       # why does debug agent 1 step runs almost without issues whereas a real agent has so much ???
