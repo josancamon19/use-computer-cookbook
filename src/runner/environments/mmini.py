@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -201,13 +202,31 @@ class MminiEnvironment(BaseEnvironment):
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
                     result = await self.exec(line)
                 if result.return_code != 0:
-                    raise RuntimeError(
-                        f"pre_command [{i+1}/{len(lines)}] failed "
-                        f"(rc={result.return_code}):\n"
-                        f"cmd: {line}\n"
-                        f"stdout: {result.stdout or ''}\n"
-                        f"stderr: {result.stderr or ''}"
-                    )
+                    combined = (result.stdout or "") + (result.stderr or "")
+                    # -1712 = AppleEvent timed out (Notes/iWork cold-start)
+                    # -1728 = Can't get application (app not available yet)
+                    # One retry after 15s gives the app another 45s to boot.
+                    if any(e in combined for e in ["-1712", "-1728"]):
+                        self.logger.warning(
+                            f"pre_command [{i+1}/{len(lines)}] got AE error "
+                            f"({combined[:80]}), retrying in 15s..."
+                        )
+                        await asyncio.sleep(15)
+                        if n > 0:
+                            if needs_exec_ax(transpiled_line):
+                                result = await self._exec_ax(transpiled_line)
+                            else:
+                                result = await self.exec(transpiled_line)
+                        else:
+                            result = await self.exec(line)
+                    if result.return_code != 0:
+                        raise RuntimeError(
+                            f"pre_command [{i+1}/{len(lines)}] failed "
+                            f"(rc={result.return_code}):\n"
+                            f"cmd: {line}\n"
+                            f"stdout: {result.stdout or ''}\n"
+                            f"stderr: {result.stderr or ''}"
+                        )
                 else:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
 
