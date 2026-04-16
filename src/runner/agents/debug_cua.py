@@ -64,10 +64,10 @@ class DebugCUAAgent(BaseCUAAgent):
 
             await self._fire_in_process(environment, step)
             if step < self.max_steps:
-                if self.realistic:
-                    await self._think(REAL_THINK_DELAY_SEC)
-                else:
-                    await asyncio.sleep(1.0)
+                # if self.realistic:
+                #     await self._think(REAL_THINK_DELAY_SEC)
+                # else:
+                await asyncio.sleep(1.0)
 
         await self.post_run(context, "debug", "debug-cua")
 

@@ -637,7 +637,7 @@ async def main():
                     import os as _os2
                     api_base = args.api_base or "https://api.fireworks.ai/inference/v1"
                     fw_key = _os2.environ.get("FIREWORKS_API_KEY") if "fireworks" in api_base else None
-                    model = args.model if "/" in args.model else f"openai/accounts/fireworks/routers/{args.model}"
+                    model = args.model if "/" in args.model else f"openai/accounts/fireworks/models/{args.model}"
                     await run_generic(http, sandbox_id, task["instruction"], model, args.max_steps, output_dir, api_base=api_base, api_key=fw_key)
                 _emit("agent_done")
 

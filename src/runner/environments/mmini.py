@@ -197,12 +197,17 @@ class MminiEnvironment(BaseEnvironment):
                     if needs_exec_ax(transpiled_line):
                         result = await self._exec_ax(transpiled_line)
                     else:
-                        result = await self.exec(transpiled_line)
+                        result = await self.exec(transpiled_line, timeout_sec=PRE_COMMAND_OSASCRIPT_TIMEOUT_S + 10)
                 else:
                     self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
-                    result = await self.exec(line)
+                    result = await self.exec(line, timeout_sec=PRE_COMMAND_OSASCRIPT_TIMEOUT_S + 10)
                 if result.return_code != 0:
                     combined = (result.stdout or "") + (result.stderr or "")
+                    if result.return_code == -14:
+                        self.logger.warning(
+                            f"pre_command [{i+1}/{len(lines)}] ALARM-KILLED "
+                            f"(perl alarm fired — command exceeded timeout). cmd={line[:80]}"
+                        )
                     # -1712 = AppleEvent timed out (Notes/iWork cold-start)
                     # -1728 = Can't get application (app not available yet)
                     # One retry after 15s gives the app another 45s to boot.
@@ -228,7 +233,11 @@ class MminiEnvironment(BaseEnvironment):
                             f"stderr: {result.stderr or ''}"
                         )
                 else:
-                    self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
+                    out = ((result.stdout or "") + (result.stderr or "")).strip()
+                    if out:
+                        self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok (output: {out[:120]})")
+                    else:
+                        self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
 
         # Load in_process config (if any) for fire_in_process()
         self._in_process_cmd = None
@@ -389,16 +398,56 @@ class MminiEnvironment(BaseEnvironment):
                 f"verifier ALARM-KILLED after {t.elapsed:.1f}s (timeout={timeout}s) — "
                 f"reward=0.0 is a verifier hang, NOT a task failure. cmd={full_cmd[:120]}"
             )
-            # Drop a marker in the trial's verifier dir so artifact collection
-            # picks it up. Fire-and-forget via exec_ssh (a new 5s-wrapped exec),
-            # not exec_ax — we don't want another hang inside a hang.
+            # Drop a marker and collect diagnostics — all best-effort via
+            # exec_ssh (never exec_ax — we don't want another AX hang).
             try:
                 await self.sandbox.exec_ssh(
                     "touch /tmp/harbor/logs/verifier/alarm-killed.marker",
                     timeout=5,
                 )
-            except Exception as exc:  # best-effort, don't fail the trial on it
+            except Exception as exc:
                 self.logger.debug(f"alarm-killed marker write failed: {exc}")
+
+            # 1. Pull whatever test.sh managed to write before getting killed.
+            #    Partial output tells us which check was running when it hung.
+            try:
+                r = await self.sandbox.exec_ssh(
+                    "cat /tmp/harbor/logs/verifier/test-stdout.txt 2>/dev/null || echo '<empty>'",
+                    timeout=5,
+                )
+                stdout_text = (r.stdout or "").strip()
+                self.logger.warning(f"verifier test-stdout (partial): {stdout_text[:500]!r}")
+                # Also save to trial dir for the viewer / post-analysis
+                local_out = self.trial_paths.trial_dir / "verifier-stdout.txt"
+                local_out.write_text(stdout_text)
+            except Exception as exc:
+                self.logger.debug(f"alarm-killed stdout fetch failed: {exc}")
+
+            # 2. Check if the computer-server (port 8000) is still alive.
+            #    Connection refused = server crashed. Timeout = server hung.
+            try:
+                r = await self.sandbox.exec_ssh(
+                    "curl -s -m 3 -o /dev/null -w '%{http_code}' "
+                    "http://127.0.0.1:8000/health 2>/dev/null || echo 'no-response'",
+                    timeout=6,
+                )
+                self.logger.warning(
+                    f"verifier post-alarm computer-server probe: {(r.stdout or '').strip()!r}"
+                )
+            except Exception as exc:
+                self.logger.debug(f"alarm-killed server probe failed: {exc}")
+
+            # 3. Show what's still running on the VM — hung ax_helper, curl, python?
+            try:
+                r = await self.sandbox.exec_ssh(
+                    "ps aux | grep -E 'ax_helper|cua.server|python|curl' | grep -v grep || true",
+                    timeout=5,
+                )
+                procs = (r.stdout or "").strip()
+                if procs:
+                    self.logger.warning(f"verifier post-alarm processes:\n{procs[:800]}")
+            except Exception as exc:
+                self.logger.debug(f"alarm-killed process list failed: {exc}")
         elif is_verifier:
             self.logger.info(
                 f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
@@ -429,7 +478,11 @@ class MminiEnvironment(BaseEnvironment):
         full_cmd = self._wrap_with_timeout(self._remap_str(command), timeout_sec)
         with _timer() as t:
             result = await self.sandbox.exec_ax(full_cmd, timeout=timeout_sec)
-        self.logger.debug(f"exec_ax rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}")
+        out = (result.stdout or "").strip()
+        self.logger.info(
+            f"exec_ax rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
+            + (f" output={out[:120]!r}" if out else "")
+        )
         return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
 
     async def upload_file(
