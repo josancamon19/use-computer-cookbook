@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+from mmini.ax_transpile import patch_curl_timeouts, transpile
+
 # Benchmark_Backup items that a task can reference (keyword → actual filename)
 _BACKUP_ITEMS = {
     "benchmark_files": "benchmark_files",
@@ -141,11 +143,21 @@ def _build_test_sh(grading_cmds: list) -> str:
             for i, cmd in enumerate(checks):
                 escaped = cmd.replace("'", "'\\''")
                 lines.append(f"# Check {i + 1}")
-                lines.append(f"if bash -c '{escaped}' 2>/dev/null | grep -qi 'true'; then")
+                # Capture output to a temp file instead of piping directly into
+                # grep. When perl's alarm kills bash, any children bash spawned
+                # (e.g. `defaults read | grep -q`) become orphaned and keep
+                # bash's stdout (the pipe write-end) open — outer grep never
+                # gets EOF → 28s alarm fires. With a temp file there is no pipe
+                # to block on: the outer grep runs *after* perl returns.
+                lines.append("_r=$(mktemp)")
+                lines.append(f"perl -e 'alarm 5; exec @ARGV' -- bash -c '{escaped}' > \"$_r\" 2>/dev/null")
+                lines.append("if grep -qi 'true' \"$_r\" 2>/dev/null; then")
+                lines.append('  rm -f "$_r"')
                 lines.append('  echo "1" > "$REWARD"')
                 lines.append('  echo "Score: 1"')
                 lines.append("  exit 0")
                 lines.append("fi")
+                lines.append('rm -f "$_r"')
                 lines.append("")
             lines.append('echo "0" > "$REWARD"')
             lines.append('echo "Score: 0"')
@@ -357,6 +369,12 @@ class MacOSWorldToHarbor:
             for cmd, score in grading_cmds
         ]
         test_sh = _build_test_sh(grading_cmds)
+        # Transpile osascript AX patterns and patch any existing base64-encoded
+        # curl calls to include -m 5 timeout. Baking this into the dataset means
+        # the verifier always runs the hardened script regardless of which
+        # environment uploads it — no runtime patching needed.
+        test_sh, _ = transpile(test_sh)
+        test_sh, _ = patch_curl_timeouts(test_sh)
         test_path = tests_dir / "test.sh"
         test_path.write_text(test_sh, encoding="utf-8")
         test_path.chmod(0o755)

@@ -2,7 +2,7 @@ jobs_dir: jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 3
+    n_concurrent_trials: 16
 environment:
     import_path: "runner.environments.mmini:MminiEnvironment"
     kwargs:
@@ -16,21 +16,21 @@ agents:
     # - import_path: "runner.agents.debug_cua:DebugCUAAgent"
     #   model_name: "debug"
     #   kwargs:
-    #       max_steps: 20
-    #       realistic: true
+    #       max_steps: 1
+          # realistic: true 
 
-    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-      model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
-      kwargs:
-          max_steps: 20
-          max_tokens: 4096
-          api_base: "https://api.fireworks.ai/inference/v1"
     # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
-    #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
+    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
     #   kwargs:
     #       max_steps: 20
     #       max_tokens: 4096
     #       api_base: "https://api.fireworks.ai/inference/v1"
+    - import_path: "runner.agents.generic_cua:GenericCUAAgent"
+      model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
+      kwargs:
+          max_steps: 20
+          max_tokens: 4096
+          api_base: "https://api.fireworks.ai/inference/v1"
 
     # - import_path: "runner.agents.generic_cua:GenericCUAAgent"
     #   model_name: "openai/moonshotai/kimi-k2.5" # lilac
@@ -40,18 +40,3 @@ agents:
     #       api_base: "https://api.getlilac.com/v1"
 datasets:
     - path: datasets/macosworld_ready
-      # Focused debug set: tasks that alarm-kill the verifier (ax_helper.py hangs).
-      # One representative per category with highest alarm rate.
-      task_names:
-          # sys_apps — highest alarm rate (34/34 in last run)
-          - sys_apps__07709761-78b1-8043-ffb2-eebaeed08109
-          - sys_apps__4a89fe83-8a93-ecd4-7841-c0bb470571c2
-          # advanced — uses Script Editor AX queries specifically
-          - advanced__5a219d2f-1c42-1bec-a7a2-2ef80e41c657
-          - advanced__75ae61f4-5cde-2e6b-28f0-5bbf8303726d
-          # media — AX tree queries
-          - media__09a146c8-d1cf-dbdb-54ce-b60ede93cdab
-          # productivity
-          - productivity__000d01d7-75ba-86fc-7f91-41cf48c1fcdd
-          # multi_apps
-          - multi_apps__4fb31f99-0748-3a41-a11f-e166f194e4c8

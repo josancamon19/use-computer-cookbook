@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -10,6 +11,14 @@ import shlex
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+from harbor.environments.base import BaseEnvironment, ExecResult
+from harbor.models.environment_type import EnvironmentType
+from harbor.models.task.config import EnvironmentConfig
+from harbor.models.trial.paths import TrialPaths
+from mmini.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, transpile
+from mmini.client import AsyncMmini
+from mmini.sandbox import AsyncMacOSSandbox
 
 
 @contextmanager
@@ -20,13 +29,6 @@ def _timer():
         @property
         def elapsed(self): return time.monotonic() - self.start
     yield _T()
-
-from harbor.environments.base import BaseEnvironment, ExecResult
-from harbor.models.environment_type import EnvironmentType
-from harbor.models.task.config import EnvironmentConfig
-from harbor.models.trial.paths import TrialPaths
-from mmini.client import AsyncMmini
-from mmini.sandbox import AsyncMacOSSandbox
 
 
 class MminiEnvironment(BaseEnvironment):
@@ -148,29 +150,14 @@ class MminiEnvironment(BaseEnvironment):
         """Run pre-agent task setup from tests/setup/ if present."""
         setup_dir = self._task_dir / "tests" / "setup"
 
-        # Upload test.sh for the verifier (Harbor doesn't mount task dirs in
-        # remote envs). Transpile osascript+System Events Accessibility
-        # patterns into python3.12 invocations *before* upload — see
-        # mmini.ax_transpile for the why and the supported patterns.
+        # Upload test.sh for the verifier. The macosworld adapter pre-bakes
+        # the transpiled (ax_helper) version into the dataset at generation
+        # time, so we just upload as-is. verifier.py will also upload this
+        # same file when it calls upload_dir("/tests") — no patching needed.
         test_script = self._task_dir / "tests" / "test.sh"
         if test_script.exists():
-            from mmini.ax_transpile import transpile, needs_exec_ax, PRE_COMMAND_OSASCRIPT_TIMEOUT_S
-
-            raw = test_script.read_text()
-            rewritten, n = transpile(raw)
-            if n > 0:
-                # Stage the rewritten file in the trial dir so the upload path
-                # has a real file to send. Trial dir is per-trial so this is safe.
-                staged = self.trial_paths.trial_dir / ".test.transpiled.sh"
-                staged.write_text(rewritten)
-                self.logger.info(f"uploading test.sh (transpiled {n} AX call(s))")
-                # Preview shows what actually shipped — debugging a hung trial
-                # otherwise requires re-deriving transpiler output.
-                self.logger.info(f"  transpiled preview: {rewritten[:300]!r}")
-                await self.upload_file(staged, "/tests/test.sh")
-            else:
-                self.logger.info("uploading test.sh")
-                await self.upload_file(test_script, "/tests/test.sh")
+            self.logger.info("uploading test.sh")
+            await self.upload_file(test_script, "/tests/test.sh")
 
         pre_cmd_path = setup_dir / "pre_command.sh"
         if pre_cmd_path.exists():
@@ -244,8 +231,7 @@ class MminiEnvironment(BaseEnvironment):
         self._in_process_step = None
         config_path = setup_dir / "config.json"
         if config_path.exists():
-            import json as _json
-            cfg = _json.loads(config_path.read_text())
+            cfg = json.loads(config_path.read_text())
             ip = cfg.get("in_process")
             if ip and isinstance(ip, list) and len(ip) >= 2:
                 self._in_process_cmd = ip[0]
