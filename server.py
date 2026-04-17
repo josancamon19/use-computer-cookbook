@@ -180,6 +180,26 @@ def read_reward(jobs_dir: Path) -> tuple[float | None, dict | None]:
     return None, None
 
 
+def read_step_counts(trial_dir: Path | None) -> tuple[int | None, int | None]:
+    """Return (n_steps, n_actions). n_steps is agent turns (excludes the
+    initial user message); n_actions is turns that contain at least one
+    tool_call. A completed run with n_actions=0 means the agent refused to
+    touch the UI — the usual signature of 'answered in text then quit'."""
+    if trial_dir is None:
+        return None, None
+    traj = trial_dir / "agent" / "trajectory.json"
+    if not traj.exists():
+        return None, None
+    try:
+        data = json.loads(traj.read_text())
+    except Exception:
+        return None, None
+    steps = data.get("steps") or []
+    agent_steps = [s for s in steps if s.get("source") == "agent"]
+    actions = sum(1 for s in agent_steps if s.get("tool_calls"))
+    return len(agent_steps), actions
+
+
 async def handle_run(request: web.Request) -> web.Response:
     body = await request.json()
     task = body.get("task") or {}
@@ -237,6 +257,8 @@ async def handle_get_job(request: web.Request) -> web.Response:
         except ValueError:
             pass
 
+    n_steps, n_actions = read_step_counts(trial_dir)
+
     done = rec.task.done()
     if not done:
         return web.json_response({
@@ -244,6 +266,8 @@ async def handle_get_job(request: web.Request) -> web.Response:
             "status": "running",
             "sandbox_id": sandbox_id,
             "trial_path": trial_rel_path,
+            "n_steps": n_steps,
+            "n_actions": n_actions,
         })
 
     # Harbor subprocess finished — decide completed vs failed.
@@ -255,6 +279,8 @@ async def handle_get_job(request: web.Request) -> web.Response:
             "sandbox_id": sandbox_id,
             "trial_path": trial_rel_path,
             "error": err,
+            "n_steps": n_steps,
+            "n_actions": n_actions,
         })
 
     reward, result_json = read_reward(jobs_dir)
@@ -266,6 +292,8 @@ async def handle_get_job(request: web.Request) -> web.Response:
         "trial_path": trial_rel_path,
         "reward": reward,
         "returncode": rec.returncode,
+        "n_steps": n_steps,
+        "n_actions": n_actions,
         # The caller may want to render a few result fields without fetching.
         "stats": (result_json or {}).get("stats"),
     })

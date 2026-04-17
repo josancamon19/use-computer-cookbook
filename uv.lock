@@ -2641,6 +2641,7 @@ dependencies = [
     { name = "mmini" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -2652,6 +2653,7 @@ requires-dist = [
     { name = "mmini", editable = "../sdk" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 
 [[package]]
