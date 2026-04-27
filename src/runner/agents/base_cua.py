@@ -161,40 +161,15 @@ async def execute_action(
     return f"Action '{action_type}' executed", ss, f"images/{img_name}"
 
 
-def _resolve_task_dir(logs_dir: Path) -> Path | None:
-    """Discover task_dir from the trial's config.json.
-
-    Harbor writes task.path verbatim — usually relative to wherever harbor was
-    launched. If the relative path doesn't resolve against cwd, also try the
-    trial dir and a few parent levels so the resolver works whether harbor was
-    invoked from the runner root, /repo, or anywhere else.
-    """
-    trial_dir = logs_dir.parent
-    config_path = trial_dir / "config.json"
-    if not config_path.exists():
-        return None
-    try:
-        data = json.loads(config_path.read_text())
-    except Exception:  # noqa: BLE001
-        return None
-    task_path = (data.get("task") or {}).get("path")
-    if not task_path:
-        return None
-    candidates: list[Path] = [Path(task_path)]
-    if not Path(task_path).is_absolute():
-        candidates += [
-            trial_dir / task_path,
-            trial_dir.parent / task_path,
-            trial_dir.parent.parent / task_path,
-            trial_dir.parent.parent.parent / task_path,
-        ]
-    for p in candidates:
-        try:
-            if p.exists():
-                return p.resolve()
-        except OSError:
-            continue
-    return None
+def _task_dir_from_env(environment: BaseEnvironment) -> Path:
+    """Pull the task dir from the environment — always set at harbor init."""
+    p = getattr(environment, "_task_dir", None) or getattr(environment, "task_dir", None)
+    if p is None:
+        raise RuntimeError(
+            "environment exposes neither _task_dir nor task_dir; "
+            "agent can't locate the task directory"
+        )
+    return Path(p).resolve()
 
 
 def write_trajectory(
@@ -242,11 +217,8 @@ class BaseCUAAgent(BaseAgent):
         self.max_steps = max_steps
         self.screen_width = screen_width
         self.screen_height = screen_height
-        # Try resolving here for callers who pass logs_dir directly; harbor
-        # writes the trial's config.json AFTER agent __init__, so this often
-        # returns None when invoked through harbor — we re-resolve in
-        # pre_run() after harbor has finished setup.
-        self.task_dir = Path(task_dir) if task_dir else _resolve_task_dir(logs_dir)
+        # task_dir is bound from the environment in pre_run(); see comment there.
+        self.task_dir: Path | None = Path(task_dir) if task_dir else None
         self._recording_id: str | None = None
         # Sandbox is platform-agnostic at the base level. macOS subclasses cast
         # to AsyncMacOSSandbox; iOS subclasses cast to AsyncIOSSandbox.
@@ -273,13 +245,12 @@ class BaseCUAAgent(BaseAgent):
         if sandbox is None:
             raise RuntimeError("CUA agents require an environment with a .sandbox property")
         self.sandbox = sandbox
-        # Late-bind task_dir: harbor writes the trial's config.json AFTER
-        # agent __init__, so the early _resolve_task_dir call may have missed
-        # it. By pre_run time the trial dir is fully populated.
+        # Bind task_dir from the env (always set at harbor init); harbor doesn't
+        # write the trial's config.json until after agent __init__, so reading
+        # it from there is racy. The env's _task_dir is reliable.
         if self.task_dir is None:
-            self.task_dir = _resolve_task_dir(self.logs_dir)
-            if self.task_dir:
-                self.logger.info(f"BaseCUAAgent: resolved task_dir={self.task_dir}")
+            self.task_dir = _task_dir_from_env(environment)
+            self.logger.info(f"task_dir={self.task_dir}")
         await self.start_recording(sandbox)
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.steps = [{"step_id": 1, "source": "user", "message": ""}]

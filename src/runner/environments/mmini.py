@@ -1,13 +1,9 @@
-"""mmini environment — runs Harbor tasks on macOS VMs via the mmini gateway."""
+"""Harbor environment that drives mmini sandboxes (macOS VMs or iOS sims)."""
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
-import re
-import shlex
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,23 +12,16 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from mmini.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, transpile
 from mmini.client import AsyncMmini
 from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox
 
-
-def _expand_ios_id(short: str, kind: str) -> str:
-    """Inverse of server.py:_strip_ios_prefix. If `short` already contains the
-    full `com.apple.*` namespace, leave it alone; otherwise prepend the
-    boilerplate so xcrun simctl / lume-emu can resolve it."""
-    if not short or short.startswith("com.apple."):
-        return short
-    return f"com.apple.CoreSimulator.{kind}.{short}"
+from runner.environments import ios_runtime, macos_runtime
+from runner.environments import setup as setup_helpers
 
 
 @contextmanager
 def _timer():
-    """Yields an object with .elapsed property (seconds since context entered)."""
+    """Yield an object with `.elapsed` (seconds since context entered)."""
     class _T:
         def __init__(self): self.start = time.monotonic()
         @property
@@ -41,7 +30,7 @@ def _timer():
 
 
 class MminiEnvironment(BaseEnvironment):
-    """A macOS VM environment backed by the mmini gateway."""
+    """Runs harbor tasks on a mmini sandbox: macOS VMs or iOS simulators."""
 
     def __init__(
         self,
@@ -66,13 +55,13 @@ class MminiEnvironment(BaseEnvironment):
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
         api_key = api_key or os.environ.get("MMINI_API_KEY", "")
-        # Stored so iOS exec() can export it to bash graders that curl the gateway.
         self._api_key = api_key
         self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
         self._sandbox: AsyncSandbox | None = None
+        self._in_process_cmd: str | None = None
+        self._in_process_step: int | None = None
 
-        # Propagate SDK logs (mmini.*) into harbor's trial logger
-        # so retries and transient errors are visible in trial.log
+        # Wire SDK logs (mmini.*) into harbor's trial logger.
         sdk_logger = logging.getLogger("mmini")
         if logger and not sdk_logger.handlers:
             sdk_logger.setLevel(logging.DEBUG)
@@ -91,11 +80,13 @@ class MminiEnvironment(BaseEnvironment):
 
     @staticmethod
     def type() -> EnvironmentType:
-        return EnvironmentType.DOCKER  # Placeholder — used via import_path
+        return EnvironmentType.DOCKER  # placeholder — used via import_path
 
     @property
     def is_mounted(self) -> bool:
-        return False
+        # iOS writes <trial>/verifier/* directly via exec_local; harbor's
+        # download_dir round-trip is wasted, tell harbor to skip it.
+        return self._platform == "ios"
 
     @property
     def supports_gpus(self) -> bool:
@@ -116,13 +107,11 @@ class MminiEnvironment(BaseEnvironment):
         return self._vm_ip
 
     def _validate_definition(self) -> None:
-        # iOS sandbox sizes are whatever the simulator launches with; cpus/
-        # memory_mb in task.toml are meaningless on this path. Skip the macOS-
-        # only fixed-size warnings entirely.
+        # iOS sandbox sizes are whatever lume-emu launches; cpus/memory_mb in
+        # task.toml don't apply.
         if self._platform == "ios":
             return
         cfg = self.task_env_config
-
         if cfg.cpus > 1 and cfg.cpus != 4:
             self.logger.warning(
                 f"task requests {cfg.cpus} CPUs — mmini VMs are fixed at 4 cores"
@@ -135,12 +124,8 @@ class MminiEnvironment(BaseEnvironment):
             self.logger.warning(
                 f"task requests {cfg.storage_mb}MB storage — mmini VMs have 80GB disks"
             )
-
-        # TODO: implement skills_dir — copy skills directory to the VM
         if cfg.skills_dir:
-            self.logger.warning(
-                "task defines skills_dir — not yet supported in mmini"
-            )
+            self.logger.warning("task defines skills_dir — not yet supported in mmini")
 
     async def start(self, force_build: bool = False) -> None:
         if self._sandbox_id is not None:
@@ -149,16 +134,13 @@ class MminiEnvironment(BaseEnvironment):
         self.logger.info(f"creating mmini sandbox (platform={self._platform})...")
         with _timer() as t:
             if self._platform == "ios":
-                device_type, runtime = self._read_ios_pin()
+                device_type, runtime = ios_runtime.read_ios_pin(self._task_dir)
                 if device_type or runtime:
                     self.logger.info(
                         f"ios pin: device_type={device_type!r} runtime={runtime!r}"
                     )
                 self._sandbox = await self._client.create(
-                    type="ios",
-                    host=self._host,
-                    device_type=device_type,
-                    runtime=runtime,
+                    type="ios", device_type=device_type, runtime=runtime,
                 )
             else:
                 self._sandbox = await self._client.create(type="macos", host=self._host)
@@ -177,12 +159,11 @@ class MminiEnvironment(BaseEnvironment):
 
         await self._sandbox.start_keepalive(interval=30)
 
-        # iOS has no SSH/exec — skip the macOS-specific setup phase.
         if self._platform == "ios":
-            self._in_process_cmd = None
-            self._in_process_step = None
             return
 
+        # macOS bootstrap: prep harbor's expected paths inside the VM, then
+        # run the task's pre_command (if any).
         await self.sandbox.exec_ssh(  # type: ignore[union-attr]
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
@@ -190,138 +171,7 @@ class MminiEnvironment(BaseEnvironment):
             "sudo mkdir -p /usr/local/bin && sudo chown lume /usr/local/bin && "
             "echo 0 > /tmp/harbor/logs/verifier/reward.txt"
         )
-        await self._setup_task()
-
-    async def _setup_task(self) -> None:
-        """Run pre-agent task setup from tests/setup/ if present."""
-        setup_dir = self._task_dir / "tests" / "setup"
-
-        # Upload test.sh for the verifier. The macosworld adapter pre-bakes
-        # the transpiled (ax_helper) version into the dataset at generation
-        # time, so we just upload as-is. verifier.py will also upload this
-        # same file when it calls upload_dir("/tests") — no patching needed.
-        test_script = self._task_dir / "tests" / "test.sh"
-        if test_script.exists():
-            self.logger.info("uploading test.sh")
-            await self.upload_file(test_script, "/tests/test.sh")
-
-        pre_cmd_path = setup_dir / "pre_command.sh"
-        if pre_cmd_path.exists():
-            raw = pre_cmd_path.read_text().strip()
-
-            # Upload Benchmark_Backup files referenced by pre_command
-            await self._upload_benchmark_files(raw)
-
-            lines = [
-                line.strip()
-                for line in raw.split("\n")
-                if line.strip() and not line.startswith("#!") and not line.strip().startswith("#")
-            ]
-            for i, line in enumerate(lines):
-                # Transpile osascript AX patterns (e.g. keystroke) and route
-                # through exec_ax when needed — same as test.sh but per-line.
-                transpiled_line, n = transpile(line, fallback_timeout_s=PRE_COMMAND_OSASCRIPT_TIMEOUT_S)
-                if n > 0:
-                    self.logger.info(f"pre_command [{i+1}/{len(lines)}] (transpiled {n}): {line[:80]}")
-                    self.logger.info(f"  transpiled: {transpiled_line[:300]!r}")
-                    # Only ax_helper emissions need exec_ax (TCC Accessibility via
-                    # cua-server). Fallback osascript-with-timeout runs directly in
-                    # bash and works via regular exec without the 30s hard limit.
-                    if needs_exec_ax(transpiled_line):
-                        result = await self._exec_ax(transpiled_line)
-                    else:
-                        result = await self.exec(transpiled_line, timeout_sec=PRE_COMMAND_OSASCRIPT_TIMEOUT_S + 10)
-                else:
-                    self.logger.info(f"pre_command [{i+1}/{len(lines)}]: {line[:80]}")
-                    result = await self.exec(line, timeout_sec=PRE_COMMAND_OSASCRIPT_TIMEOUT_S + 10)
-                if result.return_code != 0:
-                    combined = (result.stdout or "") + (result.stderr or "")
-                    if result.return_code == -14:
-                        self.logger.warning(
-                            f"pre_command [{i+1}/{len(lines)}] ALARM-KILLED "
-                            f"(perl alarm fired — command exceeded timeout). cmd={line[:80]}"
-                        )
-                    # -1712 = AppleEvent timed out (Notes/iWork cold-start)
-                    # -1728 = Can't get application (app not available yet)
-                    # One retry after 15s gives the app another 45s to boot.
-                    if any(e in combined for e in ["-1712", "-1728"]):
-                        self.logger.warning(
-                            f"pre_command [{i+1}/{len(lines)}] got AE error "
-                            f"({combined[:80]}), retrying in 15s..."
-                        )
-                        await asyncio.sleep(15)
-                        if n > 0:
-                            if needs_exec_ax(transpiled_line):
-                                result = await self._exec_ax(transpiled_line)
-                            else:
-                                result = await self.exec(transpiled_line)
-                        else:
-                            result = await self.exec(line)
-                    if result.return_code != 0:
-                        raise RuntimeError(
-                            f"pre_command [{i+1}/{len(lines)}] failed "
-                            f"(rc={result.return_code}):\n"
-                            f"cmd: {line}\n"
-                            f"stdout: {result.stdout or ''}\n"
-                            f"stderr: {result.stderr or ''}"
-                        )
-                else:
-                    out = ((result.stdout or "") + (result.stderr or "")).strip()
-                    if out:
-                        self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok (output: {out[:120]})")
-                    else:
-                        self.logger.info(f"pre_command [{i+1}/{len(lines)}] ok")
-
-        # Load in_process config (if any) for fire_in_process()
-        self._in_process_cmd = None
-        self._in_process_step = None
-        config_path = setup_dir / "config.json"
-        if config_path.exists():
-            cfg = json.loads(config_path.read_text())
-            ip = cfg.get("in_process")
-            if ip and isinstance(ip, list) and len(ip) >= 2:
-                self._in_process_cmd = ip[0]
-                self._in_process_step = ip[1]
-
-        self.logger.info("task setup complete")
-
-    # Shared benchmark assets used by macOSWorld tasks
-    _BENCHMARK_ASSETS_DIR = Path(__file__).resolve().parents[3] / "macosworld" / "files"
-    _BENCHMARK_VM_DIR = "/Users/lume/Benchmark_Backup"
-
-    async def _upload_benchmark_files(self, pre_command_text: str) -> None:
-        """Upload Benchmark_Backup files referenced by pre_command."""
-        refs = set()
-        # Quoted: "Benchmark_Backup/iMovie Library.imovielibrary"
-        for m in re.finditer(r'"[^"]*Benchmark_Backup/([^"]+)"', pre_command_text):
-            refs.add(m.group(1).split("/")[0].rstrip())
-        # Unquoted: Benchmark_Backup/benchmark_files or Benchmark_Backup/X/Y
-        for m in re.finditer(r'(?<!")Benchmark_Backup/(\S+)', pre_command_text):
-            refs.add(m.group(1).split("/")[0].rstrip(";"))
-        if not refs:
-            return
-
-        # Ensure target dir exists
-        await self.sandbox.exec_ssh(f"mkdir -p {self._BENCHMARK_VM_DIR}")
-
-        for name in sorted(refs):
-            local = self._BENCHMARK_ASSETS_DIR / name
-            remote = f"{self._BENCHMARK_VM_DIR}/{name}"
-            if not local.exists():
-                self.logger.warning(f"benchmark asset not found: {local}")
-                continue
-            if local.is_dir():
-                self.logger.info(f"uploading {name}/ -> {remote}")
-                await self.upload_dir(local, remote)
-            else:
-                self.logger.info(f"uploading {name} -> {remote}")
-                await self.upload_file(local, remote)
-
-        # Verify uploads landed correctly
-        result = await self.sandbox.exec_ssh(
-            f"find {self._BENCHMARK_VM_DIR} -maxdepth 2 -type f | head -30 && echo '---' && du -sh {self._BENCHMARK_VM_DIR}/*"
-        )
-        self.logger.info(f"Benchmark_Backup contents:\n{result.stdout}")
+        await setup_helpers.run_macos_setup(self)
 
     async def stop(self, delete: bool = True) -> None:
         if self._sandbox is None:
@@ -330,46 +180,11 @@ class MminiEnvironment(BaseEnvironment):
             try:
                 await self._sandbox.close()
                 self.logger.info(f"mmini sandbox destroyed: {self._sandbox_id}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 self.logger.error(f"failed to destroy sandbox: {e}")
         self._sandbox_id = None
         self._vm_ip = None
         self._sandbox = None
-
-    # macOS SIP prevents writing to root dirs (/logs, /tests, etc.)
-    # Remap Harbor's expected paths to /tmp/harbor/*
-    _PATH_PREFIX = "/tmp/harbor"
-
-    # /app and /workspace → home dir (for coding agents like claude-code)
-    _WORKSPACE_DIR = "/Users/lume"
-
-    def _remap_str(self, s: str) -> str:
-        """Remap all known root paths in an arbitrary string."""
-        return (
-            s.replace("/logs/", f"{self._PATH_PREFIX}/logs/")
-            .replace("/logs\"", f"{self._PATH_PREFIX}/logs\"")
-            .replace("/logs'", f"{self._PATH_PREFIX}/logs'")
-            .replace("/tests/", f"{self._PATH_PREFIX}/tests/")
-            .replace("/solution/", f"{self._PATH_PREFIX}/solution/")
-            .replace("/installed-agent", f"{self._PATH_PREFIX}/installed-agent")
-            .replace("/app/", f"{self._WORKSPACE_DIR}/")
-            .replace("/workspace/", f"{self._WORKSPACE_DIR}/")
-        )
-
-    def _remap(self, path: str) -> str:
-        """Remap absolute paths for macOS."""
-        if path.startswith(("/logs", "/tests", "/solution", "/installed-agent")):
-            return self._PATH_PREFIX + path
-        if path.startswith(("/app", "/workspace")):
-            return self._WORKSPACE_DIR
-        return path
-
-    @staticmethod
-    def _wrap_with_timeout(cmd: str, timeout: int) -> str:
-        """Wrap command with perl alarm to kill hung processes on the VM."""
-        kill_after = max(timeout - 2, 5)
-        escaped = cmd.replace("'", "'\\''")
-        return f"perl -e 'alarm {kill_after}; exec @ARGV' -- bash -c '{escaped}'"
 
     async def exec(
         self,
@@ -379,304 +194,36 @@ class MminiEnvironment(BaseEnvironment):
         timeout_sec: int | None = None,
         user: str | int | None = None,
     ) -> ExecResult:
-        """Execute a command on the VM via the gateway's exec endpoint."""
-        if self._platform == "ios":
-            return await self._ios_exec(command, env, timeout_sec)
-
-        merged_env = self._merge_env(env)
-
-        remapped_cmd = self._remap_str(command)
-
-        parts = []
-        if user is not None:
-            parts.append(f"sudo -u {shlex.quote(str(user))}")
-        if merged_env:
-            remapped_env = {k: self._remap_str(v) for k, v in merged_env.items()}
-            exports = " ".join(
-                f"{k}={shlex.quote(v)}" for k, v in remapped_env.items()
-            )
-            parts.append(f"export {exports};")
-        if cwd:
-            parts.append(f"cd {shlex.quote(self._remap(cwd))} &&")
-        parts.append(remapped_cmd)
-        full_cmd = " ".join(parts)
-
-        timeout = timeout_sec or 30
-
-        # TODO: ugly hack — perl alarm wraps all exec to kill hung osascript.
-        # The right fix is server-side timeouts in lume's exec handler.
-        full_cmd = self._wrap_with_timeout(full_cmd, timeout)
-
-        # Verifier scripts (test.sh) get transpiled at upload time to invoke
-        # python3.12 with AX calls, but those calls only get TCC's
-        # Accessibility grant when invoked under cua-server's launchd-domain
-        # responsibility chain. The SSH-backed exec_ssh puts
-        # sshd-keygen-wrapper in the chain (which has Accessibility=denied)
-        # and TCC propagates the deny to children. Routing the verifier
-        # exec via exec_ax (cua-server's run_command) gives us the right
-        # chain. Detection: the command path contains "test.sh".
-        with _timer() as t:
-            if "test.sh" in full_cmd:
-                result = await self.sandbox.exec_ax(full_cmd, timeout=timeout)
-            else:
-                result = await self.sandbox.exec_ssh(full_cmd, timeout=timeout)
-        # rc=-14 is SIGALRM — our perl-alarm wrapper killed the inner command
-        # before it finished. When this happens on a verifier exec, the trial's
-        # reward.txt keeps the "0" written at setup, and the trial looks like
-        # a plain task failure in result.json. Shout it loudly so post-hoc
-        # log grep can separate "agent failed the task" from "verifier hung
-        # and got killed".
-        is_verifier = "test.sh" in full_cmd or "_ax_" in full_cmd
-        alarm_killed = result.return_code == -14
-        if is_verifier and alarm_killed:
-            self.logger.warning(
-                f"verifier ALARM-KILLED after {t.elapsed:.1f}s (timeout={timeout}s) — "
-                f"reward=0.0 is a verifier hang, NOT a task failure. cmd={full_cmd[:120]}"
-            )
-            # Drop a marker and collect diagnostics — all best-effort via
-            # exec_ssh (never exec_ax — we don't want another AX hang).
-            try:
-                await self.sandbox.exec_ssh(
-                    "touch /tmp/harbor/logs/verifier/alarm-killed.marker",
-                    timeout=5,
-                )
-            except Exception as exc:
-                self.logger.debug(f"alarm-killed marker write failed: {exc}")
-
-            # 1. Pull whatever test.sh managed to write before getting killed.
-            #    Partial output tells us which check was running when it hung.
-            try:
-                r = await self.sandbox.exec_ssh(
-                    "cat /tmp/harbor/logs/verifier/test-stdout.txt 2>/dev/null || echo '<empty>'",
-                    timeout=5,
-                )
-                stdout_text = (r.stdout or "").strip()
-                self.logger.warning(f"verifier test-stdout (partial): {stdout_text[:500]!r}")
-                # Also save to trial dir for the viewer / post-analysis
-                local_out = self.trial_paths.trial_dir / "verifier-stdout.txt"
-                local_out.write_text(stdout_text)
-            except Exception as exc:
-                self.logger.debug(f"alarm-killed stdout fetch failed: {exc}")
-
-            # 2. Check if the computer-server (port 8000) is still alive.
-            #    Connection refused = server crashed. Timeout = server hung.
-            try:
-                r = await self.sandbox.exec_ssh(
-                    "curl -s -m 3 -o /dev/null -w '%{http_code}' "
-                    "http://127.0.0.1:8000/health 2>/dev/null || echo 'no-response'",
-                    timeout=6,
-                )
-                self.logger.warning(
-                    f"verifier post-alarm computer-server probe: {(r.stdout or '').strip()!r}"
-                )
-            except Exception as exc:
-                self.logger.debug(f"alarm-killed server probe failed: {exc}")
-
-            # 3. Show what's still running on the VM — hung ax_helper, curl, python?
-            try:
-                r = await self.sandbox.exec_ssh(
-                    "ps aux | grep -E 'ax_helper|cua.server|python|curl' | grep -v grep || true",
-                    timeout=5,
-                )
-                procs = (r.stdout or "").strip()
-                if procs:
-                    self.logger.warning(f"verifier post-alarm processes:\n{procs[:800]}")
-            except Exception as exc:
-                self.logger.debug(f"alarm-killed process list failed: {exc}")
-        elif is_verifier:
-            self.logger.info(
-                f"verifier exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
-            )
-        else:
-            self.logger.debug(
-                f"exec rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
-            )
-        return ExecResult(
-            stdout=result.stdout, stderr=None, return_code=result.return_code
-        )
-
-    def _read_ios_pin(self) -> tuple[str, str]:
-        """Pull (device_type, runtime) from task.toml's [ios] block, if present.
-
-        The toml stores short forms ("iPhone-17-Pro" / "iOS-26-4") for
-        readability; we re-expand the `com.apple.CoreSimulator.*` prefix here
-        so callers get the full id ready for client.create(). Already-full
-        values pass through unchanged.
-
-        Empty strings mean "no pin" — gateway picks defaults (latest iPhone
-        Pro on latest iOS, see session.SandboxManager.pickDefaultIOS).
-        """
-        toml_path = self._task_dir / "task.toml"
-        if not toml_path.exists():
-            return "", ""
-        try:
-            import tomllib
-            data = tomllib.loads(toml_path.read_text())
-        except Exception as e:  # noqa: BLE001
-            self.logger.warning(f"task.toml parse failed: {e}")
-            return "", ""
-        ios = data.get("ios") or {}
-        device_type = str(ios.get("device_type") or "").strip()
-        runtime = str(ios.get("runtime") or "").strip()
-        return (
-            _expand_ios_id(device_type, "SimDeviceType"),
-            _expand_ios_id(runtime, "SimRuntime"),
-        )
-
-    async def _ios_exec(
-        self, command: str, env: dict[str, str] | None, timeout_sec: int | None
-    ) -> ExecResult:
-        """Run a command on the runner host (not the simulator) for iOS.
-
-        Why local-host: iOS sims have no shell. But our verifier scripts are
-        bash that POSTs to the gateway's /grade endpoint — so they're
-        host-runnable as long as we export GATEWAY_URL/SANDBOX_ID/MMINI_API_KEY.
-
-        Path remap: harbor uses absolute paths assuming a remote VM filesystem
-        (`/tests/test.sh`, `/logs/verifier/test-stdout.txt`). We rewrite those
-        to the local task_dir + trial_dir so bash can actually find/write
-        them, and harbor's later download_dir(/logs/verifier, ...) is a no-op
-        because the files are already where it expects them.
-        """
-        rewritten = command
-
-        # /tests/<x> → <task_dir>/tests/<x>
-        local_tests = self._task_dir / "tests"
-        if local_tests.exists():
-            rewritten = rewritten.replace("/tests/", f"{local_tests}/")
-
-        # /logs/verifier/<x> → <trial>/verifier/<x>. Pre-mkdir so bash redirect
-        # (test.sh > /logs/verifier/test-stdout.txt) lands somewhere writable.
-        verifier_dir = self.trial_paths.verifier_dir
-        verifier_dir.mkdir(parents=True, exist_ok=True)
-        rewritten = rewritten.replace("/logs/verifier/", f"{verifier_dir}/")
-        # Best-effort for any sibling /logs/<sub>/ harbor might inject.
-        trial_dir = verifier_dir.parent
-        for sub in ("agent", "artifacts"):
-            rewritten = rewritten.replace(f"/logs/{sub}/", f"{trial_dir / sub}/")
-
         merged_env = self._merge_env(env) or {}
-        full_env = os.environ.copy()
-        full_env.update(merged_env)
-        full_env["GATEWAY_URL"] = self._gateway_url
-        full_env["SANDBOX_ID"] = self._sandbox_id or ""
-        full_env["MMINI_API_KEY"] = self._api_key
-
-        timeout = timeout_sec or 60
-        proc = None
-        with _timer() as t:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "bash",
-                    "-c",
-                    rewritten,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=full_env,
-                )
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
-                rc = proc.returncode or 0
-            except asyncio.TimeoutError:
-                if proc is not None and proc.returncode is None:
-                    proc.kill()
-                self.logger.warning(
-                    f"ios exec timeout after {timeout}s: {rewritten[:120]}"
-                )
-                return ExecResult(stdout="", stderr=None, return_code=124)
-
-        stdout = stdout_b.decode("utf-8", "replace")
-        stderr = stderr_b.decode("utf-8", "replace")
-        is_verifier = "test.sh" in command
-        if is_verifier:
-            # Harbor reads <trial>/verifier/reward.txt to score the trial.
-            # test.sh's own ${PREFIX}/logs/verifier/reward.txt write is broken
-            # under our path remap, so we parse "Score: X" out of the captured
-            # stdout (in <trial>/verifier/test-stdout.txt) and write the file
-            # ourselves. Defaults to 0 if no marker found.
-            stdout_file = verifier_dir / "test-stdout.txt"
-            captured = ""
-            if stdout_file.exists():
-                try:
-                    captured = stdout_file.read_text()
-                except OSError:
-                    captured = ""
-            if not captured:
-                captured = stdout
-            score = "1" if "Score: 1" in captured else "0"
-            (verifier_dir / "reward.txt").write_text(f"{score}\n")
-            self.logger.info(
-                f"ios verifier rc={rc} ({t.elapsed:.1f}s) score={score} "
-                f"stdout={captured.strip()[:200]!r}"
-            )
-            if stderr.strip():
-                self.logger.info(f"ios verifier stderr: {stderr.strip()[:300]}")
-        else:
-            self.logger.debug(
-                f"ios exec rc={rc} ({t.elapsed:.1f}s) cmd={rewritten[:120]}"
-            )
-        return ExecResult(stdout=stdout, stderr=None, return_code=rc)
+        if self._platform == "ios":
+            return await ios_runtime.exec_local(self, command, merged_env, timeout_sec)
+        return await macos_runtime.exec_on_vm(
+            self, command, cwd, merged_env, timeout_sec, user
+        )
 
     async def fire_in_process(self, step: int) -> None:
-        """Fire the in_process dialog if the current step matches.
-
-        Agents call this after each step. If the task has an in_process
-        field and step matches, the dialog osascript is spawned in the
-        background so it appears on screen for the agent's next screenshot.
-        """
-        if self._in_process_cmd and step == self._in_process_step:
-            self.logger.info(f"in_process: firing dialog at step {step}")
-            await self.sandbox.exec_ssh(
-                f"nohup {self._in_process_cmd} > /dev/null 2>&1 &"
-            )
-
-    async def _exec_ax(self, command: str, timeout_sec: int = 30) -> ExecResult:
-        """Run a command via exec_ax (cua-server chain) for AX-needing calls."""
-        full_cmd = self._wrap_with_timeout(self._remap_str(command), timeout_sec)
-        with _timer() as t:
-            result = await self.sandbox.exec_ax(full_cmd, timeout=timeout_sec)
-        out = (result.stdout or "").strip()
-        self.logger.info(
-            f"exec_ax rc={result.return_code} ({t.elapsed:.1f}s) cmd={full_cmd[:100]}"
-            + (f" output={out[:120]!r}" if out else "")
-        )
-        return ExecResult(stdout=result.stdout, stderr=None, return_code=result.return_code)
-
-    async def upload_file(
-        self,
-        source_path: Path | str,
-        target_path: str,
-    ) -> None:
-        if self._platform == "ios":
-            self.logger.debug(f"ios upload stub: {source_path} -> {target_path}")
-            return
-        await self.sandbox.upload(str(source_path), self._remap(target_path))  # type: ignore[union-attr]
-
-    async def upload_dir(
-        self,
-        source_dir: Path | str,
-        target_dir: str,
-    ) -> None:
-        if self._platform == "ios":
-            self.logger.debug(f"ios upload_dir stub: {source_dir} -> {target_dir}")
-            return
-        await self.sandbox.upload_dir(str(source_dir), self._remap(target_dir))  # type: ignore[union-attr]
-
-    async def download_file(
-        self,
-        source_path: str,
-        target_path: Path | str,
-    ) -> None:
         if self._platform == "ios":
             return
-        await self.sandbox.download_file(self._remap(source_path), str(target_path))
+        await macos_runtime.fire_in_process(self, step)
 
-    async def download_dir(
-        self,
-        source_dir: str,
-        target_dir: Path | str,
-    ) -> None:
+    # --- transfer helpers (no-ops on iOS) ---
+
+    async def upload_file(self, source_path: Path | str, target_path: str) -> None:
         if self._platform == "ios":
             return
-        await self.sandbox.download_dir(self._remap(source_dir), str(target_dir))  # type: ignore[union-attr]
+        await macos_runtime.upload_file(self, source_path, target_path)
+
+    async def upload_dir(self, source_dir: Path | str, target_dir: str) -> None:
+        if self._platform == "ios":
+            return
+        await macos_runtime.upload_dir(self, source_dir, target_dir)
+
+    async def download_file(self, source_path: str, target_path: Path | str) -> None:
+        if self._platform == "ios":
+            return
+        await macos_runtime.download_file(self, source_path, target_path)
+
+    async def download_dir(self, source_dir: str, target_dir: Path | str) -> None:
+        if self._platform == "ios":
+            return
+        await macos_runtime.download_dir(self, source_dir, target_dir)
