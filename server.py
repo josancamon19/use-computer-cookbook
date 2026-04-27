@@ -42,7 +42,15 @@ class JobRec:
 JOBS: dict[str, JobRec] = {}
 
 
-def agent_spec_for(model: str, max_steps: int = 30) -> dict:
+def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> dict:
+    if platform == "ios":
+        # iOS uses a custom tool schema (tap/swipe/button/...) so generic and
+        # macOS-shaped agents don't apply. Only Anthropic for now.
+        return {
+            "import_path": "runner.agents.ios:IOSAgent",
+            "model_name": model if "/" in model else f"anthropic/{model}",
+            "kwargs": {"max_steps": max_steps},
+        }
     if "kimi" in model or "moonshot" in model or model.startswith("openai/"):
         return {
             "import_path": "runner.agents.generic_cua:GenericCUAAgent",
@@ -60,29 +68,117 @@ def agent_spec_for(model: str, max_steps: int = 30) -> dict:
     }
 
 
-def write_task_dir(task_dir: Path, task: dict) -> None:
-    (task_dir / "tests" / "setup").mkdir(parents=True, exist_ok=True)
+def _strip_ios_prefix(s: str, kind: str) -> str:
+    """Drop the boilerplate `com.apple.CoreSimulator.<kind>.` prefix so the
+    pin in task.toml stays readable. `kind` is "SimDeviceType" or "SimRuntime"."""
+    prefix = f"com.apple.CoreSimulator.{kind}."
+    return s[len(prefix):] if s.startswith(prefix) else s
+
+
+def _try_parse_spec(text: str) -> list[dict] | None:
+    """Return the parsed check spec if `text` is a JSON list of {kind: ...}
+    objects. Otherwise None — the grader is treated as raw bash."""
+    s = text.strip()
+    if not s.startswith("["):
+        return None
+    try:
+        spec = json.loads(s)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(spec, list) or not all(
+        isinstance(x, dict) and "kind" in x for x in spec
+    ):
+        return None
+    return spec
+
+
+def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
+    (task_dir / "tests").mkdir(parents=True, exist_ok=True)
+    # harbor's TaskPaths.is_valid() requires an environment/ subdir to mark
+    # this as a runnable task — empty is fine, it's just a marker.
     (task_dir / "environment").mkdir(exist_ok=True)
 
     (task_dir / "instruction.md").write_text(task.get("instruction", ""))
-    (task_dir / "task.toml").write_text(
-        "[metadata]\nauthor_name = \"mmini-collect\"\ndifficulty = \"unknown\"\n"
-        "[verifier]\ntimeout_sec = 1800\n"
-        "[agent]\ntimeout_sec = 1800\n"
-        "[environment]\ncpus = 4\nmemory_mb = 8192\nallow_internet = true\n"
-    )
+    # No [environment] block — mmini sandbox sizes (cpus/memory) are fixed by
+    # the warm-pool config on the gateway side; setting them here is ignored
+    # at best and conflicts with MminiEnvironment._validate_definition.
+    toml_lines = [
+        "[verifier]\ntimeout_sec = 90\n",
+        "[agent]\ntimeout_sec = 900\n",
+    ]
+    # Pin the simulator the task was collected with so replay coords match.
+    # MminiEnvironment.start() reads this back, re-expands the prefix, and
+    # passes the full id to client.create(type=ios). We store the short form
+    # ("iPhone-17-Pro" / "iOS-26-4") so the toml is readable; the long
+    # "com.apple.CoreSimulator.*" prefix is reconstructed at runtime.
+    if platform == "ios":
+        device_type = _strip_ios_prefix(
+            (task.get("device_type") or "").strip(), "SimDeviceType"
+        )
+        runtime = _strip_ios_prefix(
+            (task.get("runtime") or "").strip(), "SimRuntime"
+        )
+        if device_type or runtime:
+            ios_block = ["[ios]\n"]
+            if device_type:
+                ios_block.append(f'device_type = "{device_type}"\n')
+            if runtime:
+                ios_block.append(f'runtime = "{runtime}"\n')
+            toml_lines.append("".join(ios_block))
+    (task_dir / "task.toml").write_text("".join(toml_lines))
 
     graders = task.get("grading_command") or []
-    grader_sh = [
-        "#!/bin/bash",
+    header = ["#!/bin/bash"]
+    if platform == "ios":
+        header += [
+            "# iOS task — pre-commands are not supported (no shell access on",
+            "# the simulator). Grading runs on the host: POST the check spec to",
+            "# /v1/sandboxes/<id>/grade, the gateway evaluates against the live",
+            "# AX tree (same evaluator the replay path uses) and returns",
+            "# {\"passed\": bool, \"results\": [...]}.",
+        ]
+    grader_sh = header + [
         'PREFIX=""',
         '[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"',
         'REWARD="${PREFIX}/logs/verifier/reward.txt"',
     ]
     if not graders:
-        grader_sh += ['echo "1" > "$REWARD"', 'echo "Score: 1"', 'exit 0']
+        # No grader yet — fail by default so the missing verifier surfaces
+        # instead of silently passing every run.
+        grader_sh += [
+            'echo "no grader for this task yet — defaulting reward to 0" >&2',
+            'echo "0" > "$REWARD"',
+            'echo "Score: 0"',
+            'exit 0',
+        ]
     else:
+        # JSON-spec graders (iOS, the new shape) and bash graders (macOS or
+        # legacy iOS) coexist — sniff each entry and emit the matching wrapper.
+        # Spec graders POST to the gateway's /grade endpoint, which runs the
+        # exact same evaluator the replay path uses (no semantic drift).
         for cmd, _weight in graders:
+            spec = _try_parse_spec(cmd)
+            if spec is not None:
+                payload = json.dumps({"specs": spec})
+                grader_sh += [
+                    f"PAYLOAD={json.dumps(payload)}",
+                    'if ! curl -sf -H "Authorization: Bearer $MMINI_API_KEY" '
+                    '-H "Content-Type: application/json" '
+                    '-X POST "$GATEWAY_URL/v1/sandboxes/$SANDBOX_ID/grade" '
+                    '-d "$PAYLOAD" 2>/dev/null '
+                    "| grep -qE '\"passed\"[[:space:]]*:[[:space:]]*true'; then",
+                    '  echo "0" > "$REWARD"; echo "Score: 0"; exit 0',
+                    "fi",
+                ]
+                continue
+            # Raw-bash grader (macOS osascript, or older iOS curl-style).
+            # Older iOS curl graders may lack the bearer token — auto-inject so
+            # legacy tasks keep grading. Mirrors gateway runIOSGrader().
+            if platform == "ios" and "curl " in cmd and "Authorization" not in cmd:
+                cmd = cmd.replace(
+                    'curl -s "$GATEWAY_URL',
+                    'curl -s -H "Authorization: Bearer $MMINI_API_KEY" "$GATEWAY_URL',
+                )
             grader_sh += [
                 f"if ! bash -c {json.dumps(cmd)} 2>/dev/null | grep -qi 'true'; then",
                 '  echo "0" > "$REWARD"; echo "Score: 0"; exit 0',
@@ -93,25 +189,31 @@ def write_task_dir(task_dir: Path, task: dict) -> None:
     test_sh.write_text("\n".join(grader_sh) + "\n")
     test_sh.chmod(0o755)
 
-    pre = (task.get("pre_command") or "").strip()
-    if pre:
-        pc = task_dir / "tests" / "setup" / "pre_command.sh"
-        pc.write_text("#!/bin/bash\n" + pre + "\n")
-        pc.chmod(0o755)
-    (task_dir / "tests" / "setup" / "config.json").write_text(json.dumps({
-        "before_action_delay_seconds": task.get("before_action_delay_seconds", 5),
-        "before_grading_delay_seconds": task.get("before_grading_delay_seconds", 5),
-    }))
+    # Pre-command is bash-via-SSH — only meaningful on macOS. Skip for iOS.
+    if platform != "ios":
+        pre = (task.get("pre_command") or "").strip()
+        if pre:
+            setup_dir = task_dir / "tests" / "setup"
+            setup_dir.mkdir(parents=True, exist_ok=True)
+            pc = setup_dir / "pre_command.sh"
+            pc.write_text("#!/bin/bash\n" + pre + "\n")
+            pc.chmod(0o755)
 
 
-def write_job_yaml(job_yaml: Path, jobs_dir: Path, agent_spec: dict, gateway_url: str) -> None:
+def write_job_yaml(
+    job_yaml: Path,
+    jobs_dir: Path,
+    agent_spec: dict,
+    gateway_url: str,
+    platform: str = "macos",
+) -> None:
     job_yaml.write_text(yaml.safe_dump({
         "jobs_dir": str(jobs_dir),
         "n_attempts": 1,
         "orchestrator": {"type": "local", "n_concurrent_trials": 1},
         "environment": {
             "import_path": "runner.environments.mmini:MminiEnvironment",
-            "kwargs": {"gateway_url": gateway_url},
+            "kwargs": {"gateway_url": gateway_url, "platform": platform},
             "delete": True,
         },
         "agents": [agent_spec],
@@ -207,6 +309,9 @@ async def handle_run(request: web.Request) -> web.Response:
         return web.json_response({"error": "task.instruction required"}, status=400)
     model = body.get("model", "claude-sonnet-4-6")
     max_steps = int(body.get("max_steps", 30))
+    platform = (body.get("platform") or task.get("platform") or "macos").lower()
+    if platform not in ("macos", "ios"):
+        return web.json_response({"error": f"unknown platform: {platform}"}, status=400)
     gateway_url = body.get("gateway_url") or os.environ.get("GATEWAY_URL", "http://localhost:8080")
     gateway_api_key = body.get("gateway_api_key") or os.environ.get("MMINI_API_KEY", "")
 
@@ -216,9 +321,15 @@ async def handle_run(request: web.Request) -> web.Response:
     work_dir.mkdir(parents=True, exist_ok=True)
     task_dir = work_dir / "task"
     task_dir.mkdir(exist_ok=True)
-    write_task_dir(task_dir, task)
+    write_task_dir(task_dir, task, platform=platform)
     job_yaml = work_dir / "job.yaml"
-    write_job_yaml(job_yaml, work_dir / "jobs", agent_spec_for(model, max_steps), gateway_url)
+    write_job_yaml(
+        job_yaml,
+        work_dir / "jobs",
+        agent_spec_for(model, max_steps, platform=platform),
+        gateway_url,
+        platform=platform,
+    )
     (work_dir / "jobs").mkdir(exist_ok=True)
 
     env = os.environ.copy()

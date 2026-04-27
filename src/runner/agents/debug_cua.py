@@ -11,10 +11,12 @@ Two modes:
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from mmini.sandbox import AsyncIOSSandbox
 
 from runner.agents.base_cua import BaseCUAAgent
 
@@ -38,11 +40,33 @@ ACTION_POOL = [
     "click", "type", "scroll", "hotkey", "move", "press", "drag", "rclick",
 ]
 
+# iOS DSL has a smaller surface — no mouse, no keyboard hotkeys, no exec.
+ACTION_POOL_IOS = ["tap", "swipe", "type", "button", "tap", "swipe"]
+
 
 class DebugCUAAgent(BaseCUAAgent):
-    def __init__(self, *args, realistic: bool = False, **kwargs) -> None:
+    """No-LLM agent for infra smoke tests.
+
+    Three modes (mutually exclusive — replay wins, then realistic, then minimal):
+      - replay=True (iOS only today): walks `<task_dir>/actions.json` and replays
+        every recorded tool call against the live sandbox, with the same 2s
+        spacing as the gateway's replay path. Used to validate the export
+        pipeline + grader end-to-end without burning model tokens.
+      - realistic=True: deterministic canonical action stream, exercises real
+        per-step traffic patterns to repro concurrency bugs.
+      - default: 1 screenshot + 1 click/tap + 1 exec per step.
+    """
+
+    def __init__(
+        self,
+        *args,
+        realistic: bool = False,
+        replay: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.realistic = realistic
+        self.replay = replay
 
     @staticmethod
     def name() -> str:
@@ -55,12 +79,26 @@ class DebugCUAAgent(BaseCUAAgent):
         context: AgentContext,
     ) -> None:
         sandbox = await self.pre_run(environment)
+        is_ios = isinstance(sandbox, AsyncIOSSandbox)
+
+        if self.replay:
+            if not is_ios:
+                raise RuntimeError("replay mode is iOS-only today")
+            await self._replay_ios(sandbox)
+            await self.post_run(context, "debug", "debug-cua-replay")
+            return
 
         for step in range(1, self.max_steps + 1):
             if self.realistic:
-                await self._realistic_step(sandbox, step)
+                if is_ios:
+                    await self._realistic_step_ios(sandbox, step)
+                else:
+                    await self._realistic_step(sandbox, step)
             else:
-                await self._minimal_step(sandbox, step)
+                if is_ios:
+                    await self._minimal_step_ios(sandbox, step)
+                else:
+                    await self._minimal_step(sandbox, step)
 
             await self._fire_in_process(environment, step)
             if step < self.max_steps:
@@ -129,6 +167,144 @@ class DebugCUAAgent(BaseCUAAgent):
             f"ss={len(ss)}B actions={','.join(executed)} "
             f"exec_sleep={REAL_EXEC_SLEEP_SEC}s"
         )
+
+    # ---------------- iOS replay (no LLM) ----------------
+
+    async def _replay_ios(self, sandbox) -> None:
+        """Walk `<task_dir>/actions.json` and dispatch each recorded tool call.
+
+        Mirrors the gateway-side runReplay flow: 2s between actions, type
+        coalescing (legacy collections recorded one step per character; iOS
+        Maps and friends don't render single-char inputs cleanly when paced
+        like that, so we concatenate consecutive `type` runs into one call).
+        """
+        actions_path = self.task_dir / "actions.json" if self.task_dir else None
+        if actions_path is None or not actions_path.exists():
+            raise RuntimeError(
+                f"replay: actions.json missing at {actions_path} "
+                "— re-export the task with collected/export.py"
+            )
+        data = json.loads(actions_path.read_text())
+        actions = self._coalesce_type_runs(data.get("steps") or [])
+        total = len(actions)
+        self.logger.info(f"[replay-ios] replaying {total} action(s)")
+
+        for i, action in enumerate(actions, start=1):
+            if i > 1:
+                await asyncio.sleep(2.0)
+            ss = await sandbox.screenshot.take_full_screen()
+            (self.images_dir / f"step_{i:03d}.png").write_bytes(ss)
+            try:
+                await self._dispatch_ios_action(sandbox, action)
+                self.logger.info(
+                    f"[replay-ios] {i}/{total} {action['function']}({action.get('args')})"
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning(
+                    f"[replay-ios] {i}/{total} {action['function']} ERR: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    async def _dispatch_ios_action(self, sandbox, action: dict) -> None:
+        """Translate one collected action into an SDK call. Maps the gateway's
+        recorded vocabulary (tap/swipe/type/button/key/open_url) onto the
+        AsyncIOSSandbox surface."""
+        fn = action["function"]
+        args = action.get("args") or {}
+        if fn == "tap":
+            await sandbox.input.tap(float(args["x"]), float(args["y"]))
+        elif fn == "swipe":
+            # Gateway records camelCase; SDK takes snake_case.
+            from_x = float(args.get("fromX") or args.get("from_x", 0))
+            from_y = float(args.get("fromY") or args.get("from_y", 0))
+            to_x = float(args.get("toX") or args.get("to_x", 0))
+            to_y = float(args.get("toY") or args.get("to_y", 0))
+            await sandbox.input.swipe(from_x, from_y, to_x, to_y)
+        elif fn in ("type", "type_text"):
+            await sandbox.input.type_text(args.get("text", ""))
+        elif fn in ("button", "press_button"):
+            btn = (args.get("button") or "").lower().replace("_", "-")
+            await sandbox.input.press_button(btn)
+        elif fn in ("key", "press_key"):
+            await sandbox.input.press_key(int(args["keycode"]))
+        elif fn == "open_url":
+            await sandbox.apps.open_url(args.get("url", ""))
+        else:
+            raise ValueError(f"unsupported replay action: {fn!r}")
+
+    @staticmethod
+    def _coalesce_type_runs(actions: list[dict]) -> list[dict]:
+        """Merge consecutive type/type_text actions into a single type_text call.
+        Old collections recorded one step per character; sending nine separate
+        /type calls 2s apart breaks rendering on iOS Maps and friends."""
+        out: list[dict] = []
+        i = 0
+        while i < len(actions):
+            a = actions[i]
+            if a.get("function") in ("type", "type_text"):
+                buf = (a.get("args") or {}).get("text", "")
+                j = i + 1
+                while j < len(actions) and actions[j].get("function") in (
+                    "type", "type_text"
+                ):
+                    buf += (actions[j].get("args") or {}).get("text", "")
+                    j += 1
+                out.append({"function": "type_text", "args": {"text": buf}})
+                i = j
+            else:
+                out.append(a)
+                i += 1
+        return out
+
+    # ---------------- iOS variants ----------------
+
+    async def _minimal_step_ios(self, sandbox, step: int) -> None:
+        ss = await sandbox.screenshot.take_full_screen()
+        (self.images_dir / f"step_{step:03d}.png").write_bytes(ss)
+        await sandbox.input.tap(500, 1000)
+        print(f"[debug-ios] step={step}/{self.max_steps} screenshot={len(ss)} bytes")
+
+    async def _realistic_step_ios(self, sandbox, step: int) -> None:
+        """iOS analog of _realistic_step: screenshot + REAL_ACTIONS_PER_STEP
+        canonical iOS DSL actions. No exec — iOS sims have no shell."""
+        ss = await sandbox.screenshot.take_full_screen()
+        if step == 1 or step % 10 == 0 or step == self.max_steps:
+            (self.images_dir / f"step_{step:03d}.png").write_bytes(ss)
+
+        start = ((step - 1) * REAL_ACTIONS_PER_STEP) % len(ACTION_POOL_IOS)
+        names = [
+            ACTION_POOL_IOS[(start + i) % len(ACTION_POOL_IOS)]
+            for i in range(REAL_ACTIONS_PER_STEP)
+        ]
+
+        executed = []
+        for name in names:
+            try:
+                await self._run_action_ios(sandbox, name)
+                executed.append(name)
+            except Exception as e:
+                executed.append(f"{name}!err={type(e).__name__}")
+
+        print(
+            f"[debug-realistic-ios] step={step}/{self.max_steps} "
+            f"ss={len(ss)}B actions={','.join(executed)}"
+        )
+
+    async def _run_action_ios(self, sandbox, name: str) -> None:
+        """iOS DSL canonical actions — fixed coordinates, deterministic."""
+        if name == "tap":
+            await sandbox.input.tap(500, 1000)
+        elif name == "swipe":
+            # swipe up = drag content upward (reveal what's below)
+            await sandbox.input.swipe(500, 1500, 500, 500)
+        elif name == "type":
+            await sandbox.input.type_text("x" * REAL_TYPE_LEN)
+        elif name == "button":
+            await sandbox.input.press_button("home")
+        else:
+            raise ValueError(f"unknown debug ios action: {name}")
+
+    # ---------------- macOS variants ----------------
 
     async def _run_action(self, sandbox, name: str) -> None:
         """Canonical action implementations — fixed coordinates and payloads,

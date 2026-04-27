@@ -18,7 +18,16 @@ from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
 from mmini.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, transpile
 from mmini.client import AsyncMmini
-from mmini.sandbox import AsyncMacOSSandbox
+from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox
+
+
+def _expand_ios_id(short: str, kind: str) -> str:
+    """Inverse of server.py:_strip_ios_prefix. If `short` already contains the
+    full `com.apple.*` namespace, leave it alone; otherwise prepend the
+    boilerplate so xcrun simctl / lume-emu can resolve it."""
+    if not short or short.startswith("com.apple."):
+        return short
+    return f"com.apple.CoreSimulator.{kind}.{short}"
 
 
 @contextmanager
@@ -46,17 +55,21 @@ class MminiEnvironment(BaseEnvironment):
         api_key: str = "",
         ssh_user: str = "lume",
         host: str = "",
+        platform: str = "macos",
         **kwargs,
     ):
         self._gateway_url = gateway_url
         self._ssh_user = ssh_user
         self._host = host or os.environ.get("MMINI_HOST", "")
+        self._platform = platform
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
         api_key = api_key or os.environ.get("MMINI_API_KEY", "")
+        # Stored so iOS exec() can export it to bash graders that curl the gateway.
+        self._api_key = api_key
         self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
-        self._sandbox: AsyncMacOSSandbox | None = None
+        self._sandbox: AsyncSandbox | None = None
 
         # Propagate SDK logs (mmini.*) into harbor's trial logger
         # so retries and transient errors are visible in trial.log
@@ -93,7 +106,7 @@ class MminiEnvironment(BaseEnvironment):
         return False
 
     @property
-    def sandbox(self) -> AsyncMacOSSandbox:
+    def sandbox(self) -> AsyncSandbox:
         if self._sandbox is None:
             raise RuntimeError("sandbox not available — call start() first")
         return self._sandbox
@@ -103,6 +116,11 @@ class MminiEnvironment(BaseEnvironment):
         return self._vm_ip
 
     def _validate_definition(self) -> None:
+        # iOS sandbox sizes are whatever the simulator launches with; cpus/
+        # memory_mb in task.toml are meaningless on this path. Skip the macOS-
+        # only fixed-size warnings entirely.
+        if self._platform == "ios":
+            return
         cfg = self.task_env_config
 
         if cfg.cpus > 1 and cfg.cpus != 4:
@@ -128,16 +146,44 @@ class MminiEnvironment(BaseEnvironment):
         if self._sandbox_id is not None:
             return
 
-        self.logger.info("creating mmini sandbox...")
+        self.logger.info(f"creating mmini sandbox (platform={self._platform})...")
         with _timer() as t:
-            self._sandbox = await self._client.create(type="macos", host=self._host)
+            if self._platform == "ios":
+                device_type, runtime = self._read_ios_pin()
+                if device_type or runtime:
+                    self.logger.info(
+                        f"ios pin: device_type={device_type!r} runtime={runtime!r}"
+                    )
+                self._sandbox = await self._client.create(
+                    type="ios",
+                    host=self._host,
+                    device_type=device_type,
+                    runtime=runtime,
+                )
+            else:
+                self._sandbox = await self._client.create(type="macos", host=self._host)
+
         self._sandbox_id = self._sandbox.sandbox_id
-        self._vm_ip = self._sandbox.vm_ip
-        self.logger.info(f"sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id} vm={self._vm_ip} host={self._sandbox.host}")
+        if isinstance(self._sandbox, AsyncMacOSSandbox):
+            self._vm_ip = self._sandbox.vm_ip
+            self.logger.info(
+                f"macos sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id} "
+                f"vm={self._vm_ip} host={self._sandbox.host}"
+            )
+        else:
+            self.logger.info(
+                f"ios sandbox ready in {t.elapsed:.1f}s: {self._sandbox_id}"
+            )
 
-        await self.sandbox.start_keepalive(interval=30)
+        await self._sandbox.start_keepalive(interval=30)
 
-        await self.sandbox.exec_ssh(
+        # iOS has no SSH/exec — skip the macOS-specific setup phase.
+        if self._platform == "ios":
+            self._in_process_cmd = None
+            self._in_process_step = None
+            return
+
+        await self.sandbox.exec_ssh(  # type: ignore[union-attr]
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace && "
@@ -334,6 +380,9 @@ class MminiEnvironment(BaseEnvironment):
         user: str | int | None = None,
     ) -> ExecResult:
         """Execute a command on the VM via the gateway's exec endpoint."""
+        if self._platform == "ios":
+            return await self._ios_exec(command, env, timeout_sec)
+
         merged_env = self._merge_env(env)
 
         remapped_cmd = self._remap_str(command)
@@ -446,6 +495,129 @@ class MminiEnvironment(BaseEnvironment):
             stdout=result.stdout, stderr=None, return_code=result.return_code
         )
 
+    def _read_ios_pin(self) -> tuple[str, str]:
+        """Pull (device_type, runtime) from task.toml's [ios] block, if present.
+
+        The toml stores short forms ("iPhone-17-Pro" / "iOS-26-4") for
+        readability; we re-expand the `com.apple.CoreSimulator.*` prefix here
+        so callers get the full id ready for client.create(). Already-full
+        values pass through unchanged.
+
+        Empty strings mean "no pin" — gateway picks defaults (latest iPhone
+        Pro on latest iOS, see session.SandboxManager.pickDefaultIOS).
+        """
+        toml_path = self._task_dir / "task.toml"
+        if not toml_path.exists():
+            return "", ""
+        try:
+            import tomllib
+            data = tomllib.loads(toml_path.read_text())
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning(f"task.toml parse failed: {e}")
+            return "", ""
+        ios = data.get("ios") or {}
+        device_type = str(ios.get("device_type") or "").strip()
+        runtime = str(ios.get("runtime") or "").strip()
+        return (
+            _expand_ios_id(device_type, "SimDeviceType"),
+            _expand_ios_id(runtime, "SimRuntime"),
+        )
+
+    async def _ios_exec(
+        self, command: str, env: dict[str, str] | None, timeout_sec: int | None
+    ) -> ExecResult:
+        """Run a command on the runner host (not the simulator) for iOS.
+
+        Why local-host: iOS sims have no shell. But our verifier scripts are
+        bash that POSTs to the gateway's /grade endpoint — so they're
+        host-runnable as long as we export GATEWAY_URL/SANDBOX_ID/MMINI_API_KEY.
+
+        Path remap: harbor uses absolute paths assuming a remote VM filesystem
+        (`/tests/test.sh`, `/logs/verifier/test-stdout.txt`). We rewrite those
+        to the local task_dir + trial_dir so bash can actually find/write
+        them, and harbor's later download_dir(/logs/verifier, ...) is a no-op
+        because the files are already where it expects them.
+        """
+        rewritten = command
+
+        # /tests/<x> → <task_dir>/tests/<x>
+        local_tests = self._task_dir / "tests"
+        if local_tests.exists():
+            rewritten = rewritten.replace("/tests/", f"{local_tests}/")
+
+        # /logs/verifier/<x> → <trial>/verifier/<x>. Pre-mkdir so bash redirect
+        # (test.sh > /logs/verifier/test-stdout.txt) lands somewhere writable.
+        verifier_dir = self.trial_paths.verifier_dir
+        verifier_dir.mkdir(parents=True, exist_ok=True)
+        rewritten = rewritten.replace("/logs/verifier/", f"{verifier_dir}/")
+        # Best-effort for any sibling /logs/<sub>/ harbor might inject.
+        trial_dir = verifier_dir.parent
+        for sub in ("agent", "artifacts"):
+            rewritten = rewritten.replace(f"/logs/{sub}/", f"{trial_dir / sub}/")
+
+        merged_env = self._merge_env(env) or {}
+        full_env = os.environ.copy()
+        full_env.update(merged_env)
+        full_env["GATEWAY_URL"] = self._gateway_url
+        full_env["SANDBOX_ID"] = self._sandbox_id or ""
+        full_env["MMINI_API_KEY"] = self._api_key
+
+        timeout = timeout_sec or 60
+        proc = None
+        with _timer() as t:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "bash",
+                    "-c",
+                    rewritten,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=full_env,
+                )
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+                rc = proc.returncode or 0
+            except asyncio.TimeoutError:
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                self.logger.warning(
+                    f"ios exec timeout after {timeout}s: {rewritten[:120]}"
+                )
+                return ExecResult(stdout="", stderr=None, return_code=124)
+
+        stdout = stdout_b.decode("utf-8", "replace")
+        stderr = stderr_b.decode("utf-8", "replace")
+        is_verifier = "test.sh" in command
+        if is_verifier:
+            # Harbor reads <trial>/verifier/reward.txt to score the trial.
+            # test.sh's own ${PREFIX}/logs/verifier/reward.txt write is broken
+            # under our path remap, so we parse "Score: X" out of the captured
+            # stdout (in <trial>/verifier/test-stdout.txt) and write the file
+            # ourselves. Defaults to 0 if no marker found.
+            stdout_file = verifier_dir / "test-stdout.txt"
+            captured = ""
+            if stdout_file.exists():
+                try:
+                    captured = stdout_file.read_text()
+                except OSError:
+                    captured = ""
+            if not captured:
+                captured = stdout
+            score = "1" if "Score: 1" in captured else "0"
+            (verifier_dir / "reward.txt").write_text(f"{score}\n")
+            self.logger.info(
+                f"ios verifier rc={rc} ({t.elapsed:.1f}s) score={score} "
+                f"stdout={captured.strip()[:200]!r}"
+            )
+            if stderr.strip():
+                self.logger.info(f"ios verifier stderr: {stderr.strip()[:300]}")
+        else:
+            self.logger.debug(
+                f"ios exec rc={rc} ({t.elapsed:.1f}s) cmd={rewritten[:120]}"
+            )
+        return ExecResult(stdout=stdout, stderr=None, return_code=rc)
+
     async def fire_in_process(self, step: int) -> None:
         """Fire the in_process dialog if the current step matches.
 
@@ -476,20 +648,28 @@ class MminiEnvironment(BaseEnvironment):
         source_path: Path | str,
         target_path: str,
     ) -> None:
-        await self.sandbox.upload(str(source_path), self._remap(target_path))
+        if self._platform == "ios":
+            self.logger.debug(f"ios upload stub: {source_path} -> {target_path}")
+            return
+        await self.sandbox.upload(str(source_path), self._remap(target_path))  # type: ignore[union-attr]
 
     async def upload_dir(
         self,
         source_dir: Path | str,
         target_dir: str,
     ) -> None:
-        await self.sandbox.upload_dir(str(source_dir), self._remap(target_dir))
+        if self._platform == "ios":
+            self.logger.debug(f"ios upload_dir stub: {source_dir} -> {target_dir}")
+            return
+        await self.sandbox.upload_dir(str(source_dir), self._remap(target_dir))  # type: ignore[union-attr]
 
     async def download_file(
         self,
         source_path: str,
         target_path: Path | str,
     ) -> None:
+        if self._platform == "ios":
+            return
         await self.sandbox.download_file(self._remap(source_path), str(target_path))
 
     async def download_dir(
@@ -497,4 +677,6 @@ class MminiEnvironment(BaseEnvironment):
         source_dir: str,
         target_dir: Path | str,
     ) -> None:
-        await self.sandbox.download_dir(self._remap(source_dir), str(target_dir))
+        if self._platform == "ios":
+            return
+        await self.sandbox.download_dir(self._remap(source_dir), str(target_dir))  # type: ignore[union-attr]

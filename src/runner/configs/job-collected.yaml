@@ -1,0 +1,52 @@
+# Harbor job config for tasks exported via collected/export.py.
+# Today: iOS only. Pick the active agent by uncommenting exactly one block.
+#
+#   cd runner
+#   uv run harbor run \
+#     -c src/runner/configs/job-collected.yaml \
+#     -p datasets/collected/ios/<task-name>
+
+jobs_dir: ./jobs
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 1
+environment:
+    import_path: runner.environments.mmini:MminiEnvironment
+    kwargs:
+        gateway_url: http://10.10.10.2:8081
+        platform: ios
+    delete: true
+
+agents:
+    # ------------------------------------------------------------------
+    # Replay collected actions — no LLM. Walks <task>/actions.json and
+    # dispatches each recorded tap/swipe/type to the live sim with 2s
+    # spacing. Useful for validating export + grader without burning tokens.
+    # Reward should land at 1.0 if the original collection succeeded.
+    # ------------------------------------------------------------------
+    - import_path: runner.agents.debug_cua:DebugCUAAgent
+      model_name: debug
+      kwargs:
+          replay: true
+          max_steps: 30
+
+    # ------------------------------------------------------------------
+    # Anthropic Claude (provider-agnostic via litellm). Default for
+    # actual model evals.
+    # ------------------------------------------------------------------
+    # - import_path: runner.agents.ios:IOSAgent
+    #   model_name: anthropic/claude-sonnet-4-6
+    #   kwargs:
+    #     max_steps: 30
+
+    # ------------------------------------------------------------------
+    # Smoke-test infra — no LLM, no replay. Bangs on every iOS DSL
+    # endpoint with deterministic canonical actions; useful for
+    # concurrency/load testing the gateway.
+    # ------------------------------------------------------------------
+    # - import_path: runner.agents.debug_cua:DebugCUAAgent
+    #   model_name: debug
+    #   kwargs:
+    #     realistic: true
+    #     max_steps: 10
