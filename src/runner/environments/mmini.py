@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -170,6 +171,7 @@ class MminiEnvironment(BaseEnvironment):
         await self._sandbox.start_keepalive(interval=30)
 
         if self._platform == "ios":
+            await asyncio.sleep(60.0)
             return
 
         # macOS bootstrap: prep harbor's expected paths inside the VM, then

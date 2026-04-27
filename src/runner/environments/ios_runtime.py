@@ -88,9 +88,6 @@ async def exec_local(
     stderr = stderr_b.decode("utf-8", "replace")
 
     if "test.sh" in command:
-        # Harbor reads <trial>/verifier/reward.txt — write it from the parsed
-        # Score line since test.sh's own ${PREFIX}/logs/verifier/reward.txt
-        # write hits a non-writable root path under our remap.
         captured = ""
         stdout_file = verifier_dir / "test-stdout.txt"
         if stdout_file.exists():

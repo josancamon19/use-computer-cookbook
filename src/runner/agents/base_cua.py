@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,7 +14,48 @@ from typing import Any
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox  # noqa: F401  (AsyncMacOSSandbox kept for downstream type-imports)
+from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox  # noqa: F401
+from PIL import Image
+
+_log = logging.getLogger("mmini.agent")
+
+
+def vision_target_long_edge(model: str) -> int:
+    """Long-edge cap for client-side resize before vision input — per Anthropic
+    docs, model coords come back in resized-image space so we resize ourselves
+    to a known target rather than letting the server downscale silently."""
+    m = (model or "").lower()
+    if "opus-4-7" in m or "opus-4-8" in m or "opus-5" in m:
+        return 2576  # Anthropic Opus 4.7+ caps at 2576px
+    if "claude" in m or "anthropic/" in m:
+        return 1568  # Other Anthropic models cap at 1568px
+    return 1280  # OpenAI/Gemini/Fireworks — conservative middle
+
+
+def resize_for_vision(
+    image_bytes: bytes, model: str
+) -> tuple[bytes, int, int, float, float]:
+    """Aspect-preserving resize to model's vision cap.
+    Returns (bytes, api_w, api_h, sx, sy) — multiply model coords by sx/sy at dispatch.
+    Pass-through if image already fits within the cap."""
+    img = Image.open(io.BytesIO(image_bytes))
+    native_w, native_h = img.size
+    target = vision_target_long_edge(model)
+    scale = min(target / native_w, target / native_h, 1.0)
+    api_w = int(native_w * scale)
+    api_h = int(native_h * scale)
+    sx = native_w / api_w
+    sy = native_h / api_h
+    if scale == 1.0:
+        return image_bytes, api_w, api_h, sx, sy
+    resized = img.resize((api_w, api_h), Image.LANCZOS)
+    buf = io.BytesIO()
+    fmt = (img.format or "PNG").upper()
+    if fmt == "JPEG":
+        resized.convert("RGB").save(buf, format="JPEG", quality=85)
+    else:
+        resized.save(buf, format="PNG")
+    return buf.getvalue(), api_w, api_h, sx, sy
 
 # Anthropic CUA outputs key names that don't match computer-server's expected names.
 _KEY_ALIASES = {
@@ -88,23 +132,15 @@ async def execute_action(
     images_dir: Path,
     step_idx: int,
 ) -> tuple[str, bytes | None, str | None]:
-    """Execute a computer-use action.
-
-    Returns (result_text, screenshot_bytes, screenshot_path).
-    screenshot_path is relative to agent dir (e.g. "images/step_001.png").
-    """
-    import logging as _logging
-    import time as _time
-    _log = _logging.getLogger("mmini.agent")
-
+    """Execute a computer-use action; returns (result_text, ss_bytes, ss_path)."""
     action_type = action.get("action", "")
     img_name = f"step_{step_idx:03d}.png"
-    _t0 = _time.monotonic()
+    t0 = time.monotonic()
 
     if action_type == "screenshot":
         ss = await sandbox.screenshot.take_full_screen()
         (images_dir / img_name).write_bytes(ss)
-        _log.info(f"action screenshot: {_time.monotonic()-_t0:.2f}s, {len(ss)} bytes")
+        _log.info(f"action screenshot: {time.monotonic()-t0:.2f}s, {len(ss)} bytes")
         return "Screenshot taken", ss, f"images/{img_name}"
 
     if action_type in ("left_click", "click"):
@@ -152,12 +188,12 @@ async def execute_action(
     else:
         return f"Unknown action: {action_type}", None, None
 
-    _action_elapsed = _time.monotonic() - _t0
+    action_elapsed = time.monotonic() - t0
     await asyncio.sleep(2)
     ss = await sandbox.screenshot.take_full_screen()
     (images_dir / img_name).write_bytes(ss)
-    _total_elapsed = _time.monotonic() - _t0
-    _log.info(f"action {action_type}: {_action_elapsed:.2f}s + screenshot {_total_elapsed-_action_elapsed:.2f}s = {_total_elapsed:.2f}s total")
+    total_elapsed = time.monotonic() - t0
+    _log.info(f"action {action_type}: {action_elapsed:.2f}s + screenshot {total_elapsed-action_elapsed:.2f}s = {total_elapsed:.2f}s total")
     return f"Action '{action_type}' executed", ss, f"images/{img_name}"
 
 
@@ -294,9 +330,8 @@ class BaseCUAAgent(BaseAgent):
     async def stop_recording(self, sandbox: AsyncSandbox) -> None:
         if not self._recording_id:
             return
+        await asyncio.sleep(3.0)
         try:
-            import time as _time
-
             info = await sandbox.recording.stop(self._recording_id)
             self.logger.info(
                 f"Recording stopped: id={self._recording_id} "
@@ -309,11 +344,11 @@ class BaseCUAAgent(BaseAgent):
 
             rec_path = self.logs_dir / "recording.mp4"
             self.logger.info(f"Downloading recording → {rec_path}")
-            t_dl = _time.monotonic()
+            t_dl = time.monotonic()
             await sandbox.recording.download(
                 self._recording_id, str(rec_path), timeout=180.0
             )
-            dl_elapsed = _time.monotonic() - t_dl
+            dl_elapsed = time.monotonic() - t_dl
             local_size = rec_path.stat().st_size
             self.logger.info(
                 f"Recording saved: {rec_path} "

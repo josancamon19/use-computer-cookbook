@@ -28,7 +28,9 @@ from harbor.models.agent.context import AgentContext
 from mmini.sandbox import AsyncIOSSandbox
 from PIL import Image
 
-from runner.agents.base_cua import BaseCUAAgent, load_prompt
+from runner.agents.base_cua import BaseCUAAgent, load_prompt, resize_for_vision
+
+litellm.drop_params = True  # Fireworks doesn't accept tool_choice etc; drop instead of erroring
 
 
 def _build_ios_system_prompt(
@@ -44,9 +46,6 @@ def _build_ios_system_prompt(
     )
 
 
-# OpenAI-shaped tool schemas. litellm translates to each provider's native
-# tool format. The behavioral conventions (swipe direction, typing flow, back
-# gesture) live in prompts/ios.txt, not here, to keep descriptions tight.
 IOS_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -148,10 +147,15 @@ async def _execute_ios_tool(
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> tuple[str, bool]:
-    """Run a single iOS tool call. Returns (result_text, is_done)."""
+    """Run a single iOS tool call. Returns (result_text, is_done).
+
+    Result text never echoes coordinates — the model emits in api space, we
+    dispatch in device space, and feeding either back caused confusion. The
+    next observation screenshot is the real feedback signal.
+    """
     if tool_name == "tap":
         await sandbox.input.tap(float(tool_input["x"]), float(tool_input["y"]))
-        return f"tap({tool_input['x']:.0f}, {tool_input['y']:.0f})", False
+        return "tap", False
     if tool_name == "swipe":
         await sandbox.input.swipe(
             float(tool_input["from_x"]),
@@ -159,11 +163,7 @@ async def _execute_ios_tool(
             float(tool_input["to_x"]),
             float(tool_input["to_y"]),
         )
-        return (
-            f"swipe({tool_input['from_x']:.0f},{tool_input['from_y']:.0f} → "
-            f"{tool_input['to_x']:.0f},{tool_input['to_y']:.0f})",
-            False,
-        )
+        return "swipe", False
     if tool_name == "type_text":
         await sandbox.input.type_text(tool_input["text"])
         return f"type_text({tool_input['text']!r})", False
@@ -179,8 +179,14 @@ async def _execute_ios_tool(
     return f"unknown tool: {tool_name}", False
 
 
-def _data_url(png_bytes: bytes) -> str:
-    return "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+def _data_url(image_bytes: bytes) -> str:
+    """Detect the image format (PIL) and emit a matching data URL.
+
+    The iOS gateway returns JPEGs by default; we used to hardcode image/png and
+    Anthropic's strict validator would reject the request.
+    """
+    fmt = (Image.open(io.BytesIO(image_bytes)).format or "PNG").lower()
+    return f"data:image/{fmt};base64," + base64.b64encode(image_bytes).decode()
 
 
 class IOSAgent(BaseCUAAgent):
@@ -210,31 +216,25 @@ class IOSAgent(BaseCUAAgent):
                 "'openai/gpt-4o', 'gemini/gemini-2.0-flash'); set it in job.yaml."
             )
 
-        # Detect resolution from the first screenshot — sims vary (iPhone 17
-        # Pro is 1206x2622, iPad is much wider, etc.). We feed the model the
-        # native image and let it emit native pixel coords; no resize/scale
-        # round-trip. Anthropic / OpenAI / Gemini all do their own internal
-        # downsampling for vision and the per-screenshot token bill is fine.
         ss = await sandbox.screenshot.take_full_screen()
-        img = Image.open(io.BytesIO(ss))
-        screen_w, screen_h = img.size
+        screen_w, screen_h = Image.open(io.BytesIO(ss)).size
         self.screen_width = screen_w
         self.screen_height = screen_h
         (self.images_dir / "step_000.png").write_bytes(ss)
+
+        ss_api, api_w, api_h, sx, sy = resize_for_vision(ss, model)
         self.logger.info(
-            f"iOS screen detected: {screen_w}x{screen_h} (model={model})"
+            f"iOS screen={screen_w}x{screen_h} api={api_w}x{api_h} model={model}"
         )
 
-        # Cache the raw template; re-render it on every turn so {STEP_NUMBER}
-        # tracks reality. messages[0] is replaced in-place below.
         prompt_template = load_prompt("ios.txt")
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": ""},  # filled in per turn
+            {"role": "system", "content": ""},
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": instruction},
-                    {"type": "image_url", "image_url": {"url": _data_url(ss)}},
+                    {"type": "image_url", "image_url": {"url": _data_url(ss_api)}},
                 ],
             },
         ]
@@ -247,8 +247,8 @@ class IOSAgent(BaseCUAAgent):
                 "role": "system",
                 "content": _build_ios_system_prompt(
                     prompt_template,
-                    screen_w,
-                    screen_h,
+                    api_w,
+                    api_h,
                     step=step_idx + 1,
                     max_steps=self.max_steps,
                 ),
@@ -284,7 +284,6 @@ class IOSAgent(BaseCUAAgent):
 
             tool_calls = list(getattr(assistant_msg, "tool_calls", None) or [])
 
-            # Append the assistant turn to history in OpenAI shape.
             assistant_text = getattr(assistant_msg, "content", None) or ""
             assistant_entry: dict[str, Any] = {
                 "role": "assistant",
@@ -304,8 +303,6 @@ class IOSAgent(BaseCUAAgent):
                 ]
             messages.append(assistant_entry)
 
-            # No tool calls = done (or refusal). End the trial with whatever
-            # text the model emitted as the final agent message.
             if not tool_calls:
                 self.steps.append(
                     {
@@ -326,20 +323,23 @@ class IOSAgent(BaseCUAAgent):
                 except (ValueError, json.JSONDecodeError):
                     raw_args = {}
 
-                # Native pixel coords — no scaling: the model sees the same
-                # resolution as the device, so tool inputs go straight to the
-                # SDK.
+                scaled = dict(raw_args)
+                for k in ("x", "y", "from_x", "from_y", "to_x", "to_y"):
+                    if k in scaled:
+                        factor = sx if k.endswith("x") else sy
+                        scaled[k] = float(scaled[k]) * factor
+
                 tool_calls_record.append(
                     {
                         "tool_call_id": tc.id,
                         "function_name": tc.function.name,
-                        "arguments": raw_args,
+                        "arguments": scaled,
                     }
                 )
 
                 try:
                     result_text, is_done = await _execute_ios_tool(
-                        sandbox, tc.function.name, raw_args
+                        sandbox, tc.function.name, scaled
                     )
                 except Exception as e:
                     result_text = f"tool error: {type(e).__name__}: {e}"
@@ -349,9 +349,6 @@ class IOSAgent(BaseCUAAgent):
                 if is_done:
                     done_flag = True
 
-                # role=tool — text only. Image (if any) goes in the next
-                # user observation, not here, because tool-result-with-image
-                # is Anthropic-specific and breaks via litellm.
                 messages.append(
                     {
                         "role": "tool",
@@ -361,15 +358,12 @@ class IOSAgent(BaseCUAAgent):
                 )
                 obs_results.append({"source_call_id": tc.id, "content": result_text})
 
-            # If the model didn't call done(), grab a fresh screenshot of the
-            # cumulative state and append it as a user observation for the next
-            # turn. One screenshot per turn, not per tool call — provider-safe
-            # and reflects the real post-tool-batch state.
             if not done_flag:
                 await asyncio.sleep(1.0)
                 ss_bytes = await sandbox.screenshot.take_full_screen()
                 img_name = f"step_{step_idx + 1:03d}.png"
                 (self.images_dir / img_name).write_bytes(ss_bytes)
+                ss_bytes_api, _, _, _, _ = resize_for_vision(ss_bytes, model)
                 messages.append(
                     {
                         "role": "user",
@@ -377,13 +371,11 @@ class IOSAgent(BaseCUAAgent):
                             {"type": "text", "text": "Observation:"},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": _data_url(ss_bytes)},
+                                "image_url": {"url": _data_url(ss_bytes_api)},
                             },
                         ],
                     }
                 )
-                # Tag the last obs entry with the saved image path so the
-                # trajectory keeps a pointer to disk-resolution screenshots.
                 if obs_results:
                     last = obs_results[-1]
                     last["content"] = [
