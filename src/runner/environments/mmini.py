@@ -103,6 +103,16 @@ class MminiEnvironment(BaseEnvironment):
         return self._sandbox
 
     @property
+    def macos_sandbox(self) -> AsyncMacOSSandbox:
+        """Narrow `sandbox` to AsyncMacOSSandbox for macOS-only call sites."""
+        sb = self.sandbox
+        if not isinstance(sb, AsyncMacOSSandbox):
+            raise RuntimeError(
+                f"macos_sandbox accessed on non-macOS env (platform={self._platform})"
+            )
+        return sb
+
+    @property
     def vm_ip(self) -> str | None:
         return self._vm_ip
 
@@ -164,7 +174,7 @@ class MminiEnvironment(BaseEnvironment):
 
         # macOS bootstrap: prep harbor's expected paths inside the VM, then
         # run the task's pre_command (if any).
-        await self.sandbox.exec_ssh(  # type: ignore[union-attr]
+        await self.macos_sandbox.exec_ssh(
             "mkdir -p /tmp/harbor/logs/agent /tmp/harbor/logs/verifier "
             "/tmp/harbor/logs/artifacts /tmp/harbor/tests /tmp/harbor/solution "
             "/Users/lume/workspace && "

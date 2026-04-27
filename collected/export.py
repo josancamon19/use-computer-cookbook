@@ -1,33 +1,18 @@
-"""
-Export collected iOS tasks from the gateway as Harbor task directories.
+"""Export collected tasks from the gateway as Harbor task directories.
 
-The exporter handles iOS only for now; macOS exports come later if needed.
-Each export is a self-contained Harbor task dir under the `collected` dataset
-bucket (parallel to `macosworld_ready/`):
+Output: runner/datasets/collected/<platform>/<task-name>/ — same layout as
+macosworld_ready (instruction.md, task.toml, tests/test.sh, tests/setup/
+pre_command.sh) so harbor can run them with no extra config.
 
-    runner/datasets/collected/ios/<task-name>/
-        instruction.md
-        task.toml
-        tests/test.sh                   # grader spec runner (or "no grader" stub)
+    # one task by id (any platform)
+    uv run python collected/export.py --task col-...
 
-Run the exported tasks with the static Harbor config:
+    # all collected tasks of a platform
+    uv run python collected/export.py --all --platform macos
+    uv run python collected/export.py --all --platform ios
+    uv run python collected/export.py --all                 # both
 
-    cd runner
-    uv run harbor run \\
-        -c src/runner/configs/job-collected.yaml \\
-        -p datasets/collected/ios/<task-name>
-
-Usage:
-
-    # one task
-    uv run python collected/export.py --task col-0aafa213ff00e17db35cdd95c093b36f
-
-    # all iOS tasks on dev
-    uv run python collected/export.py --all
-
-Env vars:
-    MMINI_API_KEY        bearer token for the gateway (or pass --api-key)
-    MMINI_GATEWAY_URL    default gateway URL (or pass --gateway)
+Env: MMINI_API_KEY / MMINI_GATEWAY_URL (or pass --api-key / --gateway).
 """
 
 from __future__ import annotations
@@ -58,15 +43,20 @@ def _safe_name(name: str, fallback: str) -> str:
     return cleaned or fallback
 
 
-async def fetch_task_list(http: httpx.AsyncClient, gateway: str) -> list[dict]:
-    r = await http.get(
-        f"{gateway.rstrip('/')}/admin/tasks", params={"platform": "ios"}
-    )
+async def fetch_task_list(
+    http: httpx.AsyncClient, gateway: str, platform: str | None
+) -> list[dict]:
+    """Pull /admin/tasks, optionally filtered by platform."""
+    params = {}
+    if platform and platform != "all":
+        params["platform"] = platform
+    r = await http.get(f"{gateway.rstrip('/')}/admin/tasks", params=params)
     r.raise_for_status()
     rows = r.json()
-    # The list endpoint may not honor ?platform on older gateways — backstop
-    # client-side so iOS-only is always correct.
-    return [t for t in rows if (t.get("platform") or "macos") == "ios"]
+    # Older gateways may ignore ?platform — filter client-side as a backstop.
+    if platform and platform != "all":
+        rows = [t for t in rows if (t.get("platform") or "macos") == platform]
+    return rows
 
 
 async def fetch_task_detail(
@@ -109,22 +99,19 @@ def trajectory_to_actions(traj: dict) -> list[dict]:
 
 
 def task_to_runner_dict(t: dict) -> dict:
-    """Translate gateway /admin/tasks/<id> JSON into the dict shape that
-    server.py:write_task_dir expects."""
+    """Translate gateway /admin/tasks/<id> JSON into write_task_dir's input shape."""
     meta = t.get("task_meta") or {}
     instruction = t.get("instruction") or meta.get("instruction") or ""
     grader = (t.get("grader") or "").strip()
+    platform = t.get("platform") or meta.get("platform") or "macos"
+    # iOS sims have no shell — pre_commands are unrunnable. macOS keeps them.
+    pre_command = "" if platform == "ios" else (t.get("pre_command") or "").strip()
     return {
         "instruction": instruction,
-        # iOS exports never carry a pre_command — there's no SSH/exec on the
-        # simulator so anything we'd write here would be unrunnable. Drop it
-        # at the source instead of letting write_task_dir's iOS branch skip it.
-        "pre_command": "",
+        "pre_command": pre_command,
         "grading_command": [[grader, 100]] if grader else [],
-        "platform": t.get("platform") or meta.get("platform") or "ios",
-        # Pin the device used at collection time so coordinates stay valid on
-        # replay. write_task_dir emits these into task.toml's [ios] section;
-        # MminiEnvironment passes them to client.create() at start time.
+        "platform": platform,
+        # iOS-only: the device pin lands in task.toml's [ios] block.
         "device_type": t.get("device_type") or "",
         "runtime": t.get("runtime") or "",
     }
@@ -135,14 +122,12 @@ def export_one(
 ) -> tuple[Path, bool]:
     """Materialize one task. Returns (out_dir, has_grader)."""
     task_id = task["id"]
-    platform = task.get("platform") or "ios"
-    if platform != "ios":
-        raise ValueError(
-            f"{task_id}: only iOS tasks are exportable today (got {platform})"
-        )
-
     runner_task = task_to_runner_dict(task)
-    # `task_name` is flat on the list endpoint but nested under task_meta on
+    platform = runner_task["platform"]
+    if platform not in ("macos", "ios"):
+        raise ValueError(f"{task_id}: unsupported platform {platform!r}")
+
+    # `task_name` is flat on the list endpoint, nested under task_meta on
     # the detail endpoint. Try both.
     name_hint = (
         task.get("task_name")
@@ -150,14 +135,13 @@ def export_one(
         or ""
     )
     name = _safe_name(name_hint, fallback=task_id[:24])
-    out_dir = out_root / "ios" / name
+    out_dir = out_root / platform / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    write_task_dir(out_dir, runner_task, platform="ios")
+    write_task_dir(out_dir, runner_task, platform=platform)
 
     # Bundle the recorded action list so debug_cua's replay mode can walk it
-    # without re-fetching from the gateway. Optional — missing trajectory
-    # just disables debug-replay, the regular agent-driven run still works.
+    # without re-fetching. iOS-only consumer today; harmless on macOS.
     if trajectory is not None:
         actions = trajectory_to_actions(trajectory)
         if actions:
@@ -172,7 +156,13 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--task", "-t", help="Single task id (col-...)")
-    src.add_argument("--all", action="store_true", help="Export every iOS task")
+    src.add_argument("--all", action="store_true", help="Export every matching task")
+    ap.add_argument(
+        "--platform",
+        choices=["macos", "ios", "all"],
+        default="all",
+        help="With --all: filter by platform (default: all)",
+    )
     ap.add_argument(
         "--gateway",
         default=os.environ.get("MMINI_GATEWAY_URL", "http://10.10.10.2:8081"),
@@ -203,8 +193,8 @@ async def main() -> int:
             print(f"fetching {args.task} from {args.gateway} ...")
             tasks = [await fetch_task_detail(http, args.gateway, args.task)]
         else:
-            print(f"listing iOS tasks from {args.gateway} ...")
-            summaries = await fetch_task_list(http, args.gateway)
+            print(f"listing {args.platform} tasks from {args.gateway} ...")
+            summaries = await fetch_task_list(http, args.gateway, args.platform)
             print(f"  {len(summaries)} matching")
             tasks = []
             for s in summaries:

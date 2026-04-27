@@ -108,7 +108,7 @@ async def _upload_benchmark_files(env: MminiEnvironment, pre_command_text: str) 
     if not refs:
         return
 
-    await env.sandbox.exec_ssh(f"mkdir -p {BENCHMARK_VM_DIR}")
+    await env.macos_sandbox.exec_ssh(f"mkdir -p {BENCHMARK_VM_DIR}")
     for name in sorted(refs):
         local = BENCHMARK_ASSETS_DIR / name
         remote = f"{BENCHMARK_VM_DIR}/{name}"
@@ -121,7 +121,7 @@ async def _upload_benchmark_files(env: MminiEnvironment, pre_command_text: str) 
         else:
             env.logger.info(f"uploading {name} -> {remote}")
             await env.upload_file(local, remote)
-    result = await env.sandbox.exec_ssh(
+    result = await env.macos_sandbox.exec_ssh(
         f"find {BENCHMARK_VM_DIR} -maxdepth 2 -type f | head -30 && "
         f"echo '---' && du -sh {BENCHMARK_VM_DIR}/*"
     )
@@ -131,7 +131,7 @@ async def _upload_benchmark_files(env: MminiEnvironment, pre_command_text: str) 
 async def exec_ax(env: MminiEnvironment, command: str, timeout_sec: int = 30) -> ExecResult:
     """Run via cua-server's run_command — for commands that need TCC Accessibility."""
     full_cmd = wrap_with_timeout(remap_str(command), timeout_sec)
-    result = await env.sandbox.exec_ax(full_cmd, timeout=timeout_sec)  # type: ignore[union-attr]
+    result = await env.macos_sandbox.exec_ax(full_cmd, timeout=timeout_sec)
     out = (result.stdout or "").strip()
     env.logger.info(
         f"exec_ax rc={result.return_code} cmd={full_cmd[:100]}"

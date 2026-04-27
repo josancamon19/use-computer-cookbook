@@ -340,7 +340,7 @@ class MacOSWorldToHarbor:
                 _embed_backup_files(pre_command, self.files_dir, setup_dir / "files")
             split = _split_chain(rewritten)
             cmd_lines.append("\n".join(
-                l for l in split.split("\n") if not _skip_defaults_delete(l)
+                line for line in split.split("\n") if not _skip_defaults_delete(line)
             ))
         task_cmd = "\n".join(cmd_lines)
 

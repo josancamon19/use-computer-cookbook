@@ -20,7 +20,7 @@ import base64
 import io
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import litellm
 from harbor.environments.base import BaseEnvironment
@@ -429,7 +429,7 @@ def _truncate_old_screenshots(messages: list[dict[str, Any]], keep: int = 5) -> 
         if not isinstance(content, list):
             continue
         for j, item in enumerate(content):
-            if isinstance(item, dict) and item.get("type") == "image_url":
+            if isinstance(item, dict) and cast(dict[str, Any], item).get("type") == "image_url":
                 image_locations.append((i, j))
     to_remove = len(image_locations) - keep
     if to_remove <= 0:

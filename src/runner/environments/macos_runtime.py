@@ -76,9 +76,9 @@ async def exec_on_vm(
     # TCC grants apply — exec_ssh's sshd-keygen-wrapper denies them.
     t0 = time.monotonic()
     if "test.sh" in full_cmd:
-        result = await env.sandbox.exec_ax(full_cmd, timeout=timeout)  # type: ignore[union-attr]
+        result = await env.macos_sandbox.exec_ax(full_cmd, timeout=timeout)
     else:
-        result = await env.sandbox.exec_ssh(full_cmd, timeout=timeout)  # type: ignore[union-attr]
+        result = await env.macos_sandbox.exec_ssh(full_cmd, timeout=timeout)
     elapsed = time.monotonic() - t0
 
     is_verifier = "test.sh" in full_cmd or "_ax_" in full_cmd
@@ -105,13 +105,13 @@ async def _diagnose_alarm_kill(
         f"reward=0.0 is a verifier hang, NOT a task failure. cmd={full_cmd[:120]}"
     )
     try:
-        await env.sandbox.exec_ssh(  # type: ignore[union-attr]
+        await env.macos_sandbox.exec_ssh(
             "touch /tmp/harbor/logs/verifier/alarm-killed.marker", timeout=5,
         )
     except Exception as exc:  # noqa: BLE001
         env.logger.debug(f"alarm-killed marker write failed: {exc}")
     try:
-        r = await env.sandbox.exec_ssh(  # type: ignore[union-attr]
+        r = await env.macos_sandbox.exec_ssh(
             "cat /tmp/harbor/logs/verifier/test-stdout.txt 2>/dev/null || echo '<empty>'",
             timeout=5,
         )
@@ -121,7 +121,7 @@ async def _diagnose_alarm_kill(
     except Exception as exc:  # noqa: BLE001
         env.logger.debug(f"alarm-killed stdout fetch failed: {exc}")
     try:
-        r = await env.sandbox.exec_ssh(  # type: ignore[union-attr]
+        r = await env.macos_sandbox.exec_ssh(
             "curl -s -m 3 -o /dev/null -w '%{http_code}' "
             "http://127.0.0.1:8000/health 2>/dev/null || echo 'no-response'",
             timeout=6,
@@ -132,7 +132,7 @@ async def _diagnose_alarm_kill(
     except Exception as exc:  # noqa: BLE001
         env.logger.debug(f"alarm-killed server probe failed: {exc}")
     try:
-        r = await env.sandbox.exec_ssh(  # type: ignore[union-attr]
+        r = await env.macos_sandbox.exec_ssh(
             "ps aux | grep -E 'ax_helper|cua.server|python|curl' | grep -v grep || true",
             timeout=5,
         )
@@ -147,7 +147,7 @@ async def fire_in_process(env: MminiEnvironment, step: int) -> None:
     """Pop the per-task in_process dialog if the current step matches."""
     if env._in_process_cmd and step == env._in_process_step:
         env.logger.info(f"in_process: firing dialog at step {step}")
-        await env.sandbox.exec_ssh(  # type: ignore[union-attr]
+        await env.macos_sandbox.exec_ssh(
             f"nohup {env._in_process_cmd} > /dev/null 2>&1 &"
         )
 
@@ -155,16 +155,16 @@ async def fire_in_process(env: MminiEnvironment, step: int) -> None:
 # --- transfer helpers ---
 
 async def upload_file(env: MminiEnvironment, source: Path | str, target: str) -> None:
-    await env.sandbox.upload(str(source), remap(target))  # type: ignore[union-attr]
+    await env.macos_sandbox.upload(str(source), remap(target))
 
 
 async def upload_dir(env: MminiEnvironment, source: Path | str, target: str) -> None:
-    await env.sandbox.upload_dir(str(source), remap(target))  # type: ignore[union-attr]
+    await env.macos_sandbox.upload_dir(str(source), remap(target))
 
 
 async def download_file(env: MminiEnvironment, source: str, target: Path | str) -> None:
-    await env.sandbox.download_file(remap(source), str(target))
+    await env.macos_sandbox.download_file(remap(source), str(target))
 
 
 async def download_dir(env: MminiEnvironment, source: str, target: Path | str) -> None:
-    await env.sandbox.download_dir(remap(source), str(target))  # type: ignore[union-attr]
+    await env.macos_sandbox.download_dir(remap(source), str(target))

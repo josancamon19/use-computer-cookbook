@@ -82,9 +82,10 @@ class DebugCUAAgent(BaseCUAAgent):
         is_ios = isinstance(sandbox, AsyncIOSSandbox)
 
         if self.replay:
-            if not is_ios:
-                raise RuntimeError("replay mode is iOS-only today")
-            await self._replay_ios(sandbox)
+            if is_ios:
+                await self._replay_ios(sandbox)
+            else:
+                await self._replay_macos(sandbox)
             await self.post_run(context, "debug", "debug-cua-replay")
             return
 
@@ -255,6 +256,80 @@ class DebugCUAAgent(BaseCUAAgent):
                 out.append(a)
                 i += 1
         return out
+
+    # ---------------- macOS replay (no LLM) ----------------
+
+    async def _replay_macos(self, sandbox) -> None:
+        """Walk <task>/actions.json and dispatch each recorded action via the macOS SDK."""
+        actions_path = self.task_dir / "actions.json" if self.task_dir else None
+        if actions_path is None or not actions_path.exists():
+            raise RuntimeError(
+                f"replay: actions.json missing at {actions_path} "
+                "— re-export the task with collected/export.py"
+            )
+        data = json.loads(actions_path.read_text())
+        actions = data.get("steps") or []
+        total = len(actions)
+        self.logger.info(f"[replay-macos] replaying {total} action(s)")
+
+        for i, action in enumerate(actions, start=1):
+            if i > 1:
+                await asyncio.sleep(2.0)
+            ss = await sandbox.screenshot.take_full_screen()
+            (self.images_dir / f"step_{i:03d}.png").write_bytes(ss)
+            try:
+                await self._dispatch_macos_action(sandbox, action)
+                self.logger.info(
+                    f"[replay-macos] {i}/{total} {action['function']}({action.get('args')})"
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning(
+                    f"[replay-macos] {i}/{total} {action['function']} ERR: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    async def _dispatch_macos_action(self, sandbox, action: dict) -> None:
+        """Translate a recorded action into a macOS SDK call."""
+        fn = action["function"]
+        args = action.get("args") or {}
+        if fn in ("left_click", "click"):
+            await sandbox.mouse.click(
+                float(args["x"]), float(args["y"]),
+                button=args.get("button", "left"),
+                double=bool(args.get("double", False)),
+            )
+        elif fn == "double_click":
+            await sandbox.mouse.click(
+                float(args["x"]), float(args["y"]), button="left", double=True
+            )
+        elif fn == "right_click":
+            await sandbox.mouse.click(
+                float(args["x"]), float(args["y"]), button="right"
+            )
+        elif fn in ("type_text", "type"):
+            await sandbox.keyboard.type(args.get("text", ""))
+        elif fn in ("press_key", "key", "press"):
+            await sandbox.keyboard.press(args.get("key") or args.get("text", ""))
+        elif fn == "hotkey":
+            keys = args.get("keys") or args.get("key", "")
+            await sandbox.keyboard.hotkey(keys)
+        elif fn == "scroll":
+            await sandbox.mouse.scroll(
+                float(args.get("x", 0)), float(args.get("y", 0)),
+                args.get("direction", "down"),
+                int(args.get("amount", 3)),
+            )
+        elif fn == "move":
+            await sandbox.mouse.move(float(args["x"]), float(args["y"]))
+        elif fn == "drag":
+            await sandbox.mouse.drag(
+                float(args.get("startX") or args.get("from_x", 0)),
+                float(args.get("startY") or args.get("from_y", 0)),
+                float(args.get("endX") or args.get("to_x", 0)),
+                float(args.get("endY") or args.get("to_y", 0)),
+            )
+        else:
+            raise ValueError(f"unsupported macos replay action: {fn!r}")
 
     # ---------------- iOS variants ----------------
 
