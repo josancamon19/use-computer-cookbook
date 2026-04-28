@@ -19,9 +19,9 @@ environment:
     delete: true
 
 agents:
-    # Fireworks Kimi K2.5 — fireworks_ai/ prefix auto-routes via FIREWORKS_API_KEY.
+    # Anthropic Claude Sonnet 4.6
     - import_path: runner.agents.ios:IOSAgent
-      model_name: fireworks_ai/accounts/fireworks/models/kimi-k2p6
+      model_name: anthropic/claude-sonnet-4-6
       kwargs:
           max_steps: 30
 
@@ -29,18 +29,12 @@ agents:
     # Other agents — uncomment one at a time:
     # ------------------------------------------------------------------
 
-    # Anthropic Claude Sonnet 4.6
-    - import_path: runner.agents.ios:IOSAgent
-      model_name: anthropic/claude-sonnet-4-6
-      kwargs:
-          max_steps: 30
-
     # Replay collected actions — no LLM, walks <task>/actions.json
-    - import_path: runner.agents.debug_cua:DebugCUAAgent
-      model_name: debug
-      kwargs:
-          replay: true
-          max_steps: 30
+    # - import_path: runner.agents.debug_cua:DebugCUAAgent
+    #   model_name: debug
+    #   kwargs:
+    #       replay: true
+    #       max_steps: 30
 
     # Smoke-test infra — bangs on every endpoint deterministically
     # - import_path: runner.agents.debug_cua:DebugCUAAgent

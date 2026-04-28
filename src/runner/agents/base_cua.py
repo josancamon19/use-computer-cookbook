@@ -29,7 +29,9 @@ def vision_target_long_edge(model: str) -> int:
         return 2576  # Anthropic Opus 4.7+ caps at 2576px
     if "claude" in m or "anthropic/" in m:
         return 1568  # Other Anthropic models cap at 1568px
-    return 1280  # OpenAI/Gemini/Fireworks — conservative middle
+    if "kimi" in m or "fireworks" in m:
+        return 896  # Kimi: y-coord accuracy degrades at >1024 (probed on tall iOS shots)
+    return 1280  # OpenAI/Gemini fallback
 
 
 def resize_for_vision(
@@ -316,8 +318,19 @@ class BaseCUAAgent(BaseAgent):
     async def post_run(self, context: AgentContext, model: str, agent_name: str) -> None:
         """Common teardown: stop recording, write trajectory, set token counts."""
         assert self.sandbox is not None
+        await self._save_final_ax_tree(self.sandbox)
         await self.stop_recording(self.sandbox)
         self.checkpoint(context, model, agent_name)
+
+    async def _save_final_ax_tree(self, sandbox: AsyncSandbox) -> None:
+        """Snapshot the sandbox's AX tree to <agent>/final_ax_tree.json. Useful
+        for adhoc/no-verifier runs where the trajectory alone doesn't tell you
+        what state the device ended in."""
+        try:
+            tree = await sandbox.display.get_windows()
+            (self.logs_dir / "final_ax_tree.json").write_text(json.dumps(tree, indent=2))
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning(f"Failed to capture final AX tree: {e}")
 
     async def start_recording(self, sandbox: AsyncSandbox) -> None:
         try:

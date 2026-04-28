@@ -179,6 +179,36 @@ async def _execute_ios_tool(
     return f"unknown tool: {tool_name}", False
 
 
+_PAIR_KEYS = {"x": "y", "from_x": "from_y", "to_x": "to_y"}
+
+
+def _coerce_coord_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Tolerate models that pack two coords into one field, e.g. x='204, 907'.
+
+    Sonnet occasionally emits {'x': '204, 907'} or {'x': [204, 907]} despite
+    the schema asking for separate x/y numbers. Split and fill the matching
+    pair key when missing.
+    """
+    for x_key, y_key in _PAIR_KEYS.items():
+        v = args.get(x_key)
+        pair: list[float] | None = None
+        if isinstance(v, str) and "," in v:
+            try:
+                pair = [float(p.strip()) for p in v.split(",", 1)]
+            except ValueError:
+                pair = None
+        elif isinstance(v, (list, tuple)) and len(v) == 2:
+            try:
+                pair = [float(v[0]), float(v[1])]
+            except (TypeError, ValueError):
+                pair = None
+        if pair and len(pair) == 2:
+            args[x_key] = pair[0]
+            if y_key not in args:
+                args[y_key] = pair[1]
+    return args
+
+
 def _data_url(image_bytes: bytes) -> str:
     """Detect the image format (PIL) and emit a matching data URL.
 
@@ -222,9 +252,16 @@ class IOSAgent(BaseCUAAgent):
         self.screen_height = screen_h
         (self.images_dir / "step_000.png").write_bytes(ss)
 
-        ss_api, api_w, api_h, sx, sy = resize_for_vision(ss, model)
+        ss_api, api_w, api_h, _, _ = resize_for_vision(ss, model)
+        # axe tap/swipe interpret coords as logical POINTS, not pixels.
+        # Override sx/sy to map api-space → points (e.g. iPhone 17 Pro: 402×874).
+        info = await sandbox.display.get_info()
+        point_w, point_h = info.width, info.height
+        sx = point_w / api_w
+        sy = point_h / api_h
         self.logger.info(
-            f"iOS screen={screen_w}x{screen_h} api={api_w}x{api_h} model={model}"
+            f"iOS screen={screen_w}x{screen_h}px points={point_w}x{point_h} "
+            f"api={api_w}x{api_h} sx={sx:.4f} sy={sy:.4f} model={model}"
         )
 
         prompt_template = load_prompt("ios.txt")
@@ -285,6 +322,13 @@ class IOSAgent(BaseCUAAgent):
             tool_calls = list(getattr(assistant_msg, "tool_calls", None) or [])
 
             assistant_text = getattr(assistant_msg, "content", None) or ""
+            # Kimi (and other reasoning models) leave content empty and put
+            # chain-of-thought in reasoning_content. Surface it so trajectories
+            # are debuggable. Doesn't go back into the wire — model produces
+            # it fresh each turn.
+            reasoning = getattr(assistant_msg, "reasoning_content", None)
+            if reasoning and not assistant_text:
+                assistant_text = reasoning
             assistant_entry: dict[str, Any] = {
                 "role": "assistant",
                 "content": assistant_text,
@@ -323,7 +367,7 @@ class IOSAgent(BaseCUAAgent):
                 except (ValueError, json.JSONDecodeError):
                     raw_args = {}
 
-                scaled = dict(raw_args)
+                scaled = _coerce_coord_args(dict(raw_args))
                 for k in ("x", "y", "from_x", "from_y", "to_x", "to_y"):
                     if k in scaled:
                         factor = sx if k.endswith("x") else sy
