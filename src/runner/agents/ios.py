@@ -183,29 +183,38 @@ _PAIR_KEYS = {"x": "y", "from_x": "from_y", "to_x": "to_y"}
 
 
 def _coerce_coord_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Tolerate models that pack two coords into one field, e.g. x='204, 907'.
+    """Tolerate models that pack two coords into one field or emit junk.
 
-    Sonnet occasionally emits {'x': '204, 907'} or {'x': [204, 907]} despite
-    the schema asking for separate x/y numbers. Split and fill the matching
-    pair key when missing.
+    Sonnet occasionally emits {'x': '204, 907'}, {'x': '666, '} (trailing
+    comma), or {'x': [204, 907]} despite the schema asking for separate
+    numbers. Coerce to floats; only fill the y-pair when we actually got two
+    valid numbers out.
     """
     for x_key, y_key in _PAIR_KEYS.items():
         v = args.get(x_key)
-        pair: list[float] | None = None
-        if isinstance(v, str) and "," in v:
-            try:
-                pair = [float(p.strip()) for p in v.split(",", 1)]
-            except ValueError:
-                pair = None
-        elif isinstance(v, (list, tuple)) and len(v) == 2:
-            try:
-                pair = [float(v[0]), float(v[1])]
-            except (TypeError, ValueError):
-                pair = None
-        if pair and len(pair) == 2:
-            args[x_key] = pair[0]
-            if y_key not in args:
-                args[y_key] = pair[1]
+        if v is None or isinstance(v, (int, float)):
+            continue
+        nums: list[float] = []
+        if isinstance(v, str):
+            for p in v.split(","):
+                p = p.strip()
+                if not p:
+                    continue
+                try:
+                    nums.append(float(p))
+                except ValueError:
+                    pass
+        elif isinstance(v, (list, tuple)):
+            for p in v:
+                try:
+                    nums.append(float(p))
+                except (TypeError, ValueError):
+                    pass
+        if not nums:
+            continue
+        args[x_key] = nums[0]
+        if len(nums) >= 2 and y_key not in args:
+            args[y_key] = nums[1]
     return args
 
 
@@ -368,10 +377,15 @@ class IOSAgent(BaseCUAAgent):
                     raw_args = {}
 
                 scaled = _coerce_coord_args(dict(raw_args))
+                coord_err: str | None = None
                 for k in ("x", "y", "from_x", "from_y", "to_x", "to_y"):
                     if k in scaled:
                         factor = sx if k.endswith("x") else sy
-                        scaled[k] = float(scaled[k]) * factor
+                        try:
+                            scaled[k] = float(scaled[k]) * factor
+                        except (TypeError, ValueError):
+                            coord_err = f"non-numeric {k}={scaled[k]!r}"
+                            break
 
                 tool_calls_record.append(
                     {
@@ -380,6 +394,17 @@ class IOSAgent(BaseCUAAgent):
                         "arguments": scaled,
                     }
                 )
+
+                if coord_err:
+                    self.logger.warning(f"skipping {tc.function.name}: {coord_err}")
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id,
+                         "content": f"skipped (bad coords: {coord_err})"}
+                    )
+                    obs_results.append(
+                        {"source_call_id": tc.id, "content": f"skipped: {coord_err}"}
+                    )
+                    continue
 
                 try:
                     result_text, is_done = await _execute_ios_tool(
