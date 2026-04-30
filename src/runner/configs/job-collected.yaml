@@ -15,25 +15,25 @@ environment:
     import_path: runner.environments.mmini:MminiEnvironment
     kwargs:
         gateway_url: http://10.10.10.2:8081
-        platform: ios
+        platform: macos
     delete: true
 
 agents:
-    # Anthropic Claude Sonnet 4.6
-    - import_path: runner.agents.ios:IOSAgent
-      model_name: anthropic/claude-sonnet-4-6
+    # Replay collected actions — no LLM, walks <task>/actions.json
+    - import_path: runner.agents.debug_cua:DebugCUAAgent
+      model_name: debug
       kwargs:
+          replay: true
           max_steps: 30
 
     # ------------------------------------------------------------------
     # Other agents — uncomment one at a time:
     # ------------------------------------------------------------------
 
-    # Replay collected actions — no LLM, walks <task>/actions.json
-    # - import_path: runner.agents.debug_cua:DebugCUAAgent
-    #   model_name: debug
+    # Anthropic Claude Sonnet 4.6
+    # - import_path: runner.agents.ios:IOSAgent
+    #   model_name: anthropic/claude-sonnet-4-6
     #   kwargs:
-    #       replay: true
     #       max_steps: 30
 
     # Smoke-test infra — bangs on every endpoint deterministically

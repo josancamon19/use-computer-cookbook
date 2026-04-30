@@ -12,7 +12,7 @@ from mmini.tasks import task_to_harbor
 class CollectedTasksAdapter:
     def __init__(
         self,
-        gateway_url: str = "http://localhost:8080",
+        gateway_url: str = "https://api.dev.use.computer",
         api_key: str = "",
     ):
         self._client = Mmini(api_key=api_key or None, base_url=gateway_url)

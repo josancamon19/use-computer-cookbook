@@ -2,8 +2,7 @@
     "device_type": "iPhone-17-Pro",
     "runtime": "iOS-26-4",
     "tasks": [
-        "Go to Screen Time and disable location services for all apps",
-        "Create a shopping list and add a reminder to buy whey protein next Monday at 9pm",
-        "Set my Fitness app goal to 300 calories a day. I haven't used the app before. I'm 6ft, 170lb, male."
+        "What's the closest FedEx to 30 Otis St, and what time do they close on Mondays?",
+        "Create a shopping list and add a reminder to buy whey protein next Monday at 9pm"
     ]
 }

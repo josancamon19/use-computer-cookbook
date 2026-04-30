@@ -34,8 +34,6 @@ class MacOSWorldTask:
     instruction: str
     pre_command: str | dict = ""
     grading_command: list = field(default_factory=list)
-    before_action_delay_seconds: int = 10
-    before_grading_delay_seconds: int = 30
     # Parsed but unused by us — kept for filtering
     snapshot: dict = field(default_factory=dict)
     in_process: list | None = None
@@ -49,8 +47,6 @@ class MacOSWorldTask:
             instruction=data.get("task", {}).get("en", ""),
             pre_command=data.get("pre_command", ""),
             grading_command=data.get("grading_command", []),
-            before_action_delay_seconds=data.get("before_action_delay_seconds", 10),
-            before_grading_delay_seconds=data.get("before_grading_delay_seconds", 30),
             snapshot=data.get("snapshot", {}),
             in_process=data.get("in_process"),
         )
@@ -351,15 +347,11 @@ class MacOSWorldToHarbor:
         )
         pre_cmd_path.chmod(0o755)
 
-        setup_config = {
-            "task_id": task.task_id,
-            "before_action_delay_seconds": task.before_action_delay_seconds,
-            "before_grading_delay_seconds": task.before_grading_delay_seconds,
-            "in_process": task.in_process,
-        }
-        (setup_dir / "config.json").write_text(
-            json.dumps(setup_config, indent=2) + "\n", encoding="utf-8"
-        )
+        if task.in_process:
+            (setup_dir / "config.json").write_text(
+                json.dumps({"in_process": task.in_process}, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
         # tests/test.sh — grading commands inlined
         grading_cmds = task.grading_command or []

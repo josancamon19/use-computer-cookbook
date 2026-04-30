@@ -108,14 +108,12 @@ async def run_pre_command(http: httpx.AsyncClient, sandbox_id: str, config: dict
     else:
         print(f"  pre_command failed: {resp.status_code}")
 
-    delay = config.get("before_action_delay_seconds", 10)
-    if delay:
-        print(f"  Waiting {delay}s for setup...")
-        await asyncio.sleep(delay)
+    print("  Waiting 10s for setup...")
+    await asyncio.sleep(10)
 
 
 async def run_grading(http: httpx.AsyncClient, sandbox_id: str, config: dict, task_dir: Path | None = None) -> float:
-    await asyncio.sleep(config.get("before_grading_delay_seconds", 5))
+    await asyncio.sleep(5)
 
     grading = config.get("grading_command", [])
     if grading:
