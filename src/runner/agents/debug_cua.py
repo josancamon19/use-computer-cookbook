@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 from harbor.environments.base import BaseEnvironment
@@ -194,7 +195,8 @@ class DebugCUAAgent(BaseCUAAgent):
             if i > 1:
                 await asyncio.sleep(2.0)
             ss = await sandbox.screenshot.take_full_screen()
-            (self.images_dir / f"step_{i:03d}.png").write_bytes(ss)
+            ss_path = self.images_dir / f"step_{i:03d}.png"
+            ss_path.write_bytes(ss)
             try:
                 await self._dispatch_ios_action(sandbox, action)
                 self.logger.info(
@@ -205,6 +207,12 @@ class DebugCUAAgent(BaseCUAAgent):
                     f"[replay-ios] {i}/{total} {action['function']} ERR: "
                     f"{type(e).__name__}: {e}"
                 )
+            self._append_replay_step(action, ss_path)
+
+        # Capture the post-final-action state.
+        await asyncio.sleep(2.0)
+        final_ss = await sandbox.screenshot.take_full_screen()
+        (self.images_dir / f"step_{total + 1:03d}.png").write_bytes(final_ss)
 
     async def _dispatch_ios_action(self, sandbox, action: dict) -> None:
         """Translate one collected action into an SDK call. Maps the gateway's
@@ -276,7 +284,8 @@ class DebugCUAAgent(BaseCUAAgent):
             if i > 1:
                 await asyncio.sleep(2.0)
             ss = await sandbox.screenshot.take_full_screen()
-            (self.images_dir / f"step_{i:03d}.png").write_bytes(ss)
+            ss_path = self.images_dir / f"step_{i:03d}.png"
+            ss_path.write_bytes(ss)
             try:
                 await self._dispatch_macos_action(sandbox, action)
                 self.logger.info(
@@ -287,6 +296,26 @@ class DebugCUAAgent(BaseCUAAgent):
                     f"[replay-macos] {i}/{total} {action['function']} ERR: "
                     f"{type(e).__name__}: {e}"
                 )
+            self._append_replay_step(action, ss_path)
+
+        # Capture the post-final-action state so we can see what the last
+        # click actually did (verifier needs this signal too).
+        await asyncio.sleep(2.0)
+        final_ss = await sandbox.screenshot.take_full_screen()
+        (self.images_dir / f"step_{total + 1:03d}.png").write_bytes(final_ss)
+
+    def _append_replay_step(self, action: dict, ss_path: Path) -> None:
+        """ATIF step entry per replayed action so trajectory.json reflects the run."""
+        self.steps.append({
+            "step_id": len(self.steps) + 1,
+            "source": "agent",
+            "tool_calls": [{"function": action.get("function"), "args": action.get("args") or {}}],
+            "observation": {"results": [{
+                "content": [
+                    {"type": "image", "source": {"media_type": "image/png", "path": str(ss_path)}}
+                ]
+            }]},
+        })
 
     async def _dispatch_macos_action(self, sandbox, action: dict) -> None:
         """Translate a recorded action into a macOS SDK call."""
