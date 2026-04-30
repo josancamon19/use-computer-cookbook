@@ -207,6 +207,16 @@ _EXCLUDED_TASK_IDS: dict[str, str] = {
     "b25e4b35-03b8-3585-6cea-d2636a3e53b5": "imovie",
     "daef8548-e9e2-5883-c287-4c8ed11d6e83": "imovie",
     "ef40b520-3ae5-1af1-b698-127c3daf0b0e": "imovie",
+    # --- defaults delete in pre_command: cleanup commands that fail on fresh VMs ---
+    "3ef3a054-c2cc-be98-dc08-a23fedbe68fe": "defaults-delete",  # safety
+    "4fe32b2b-7f05-cbc6-47e5-b8a1bbad5bc2": "defaults-delete",  # sys_and_interface (dock autohide)
+    "694e8aa5-9106-dc74-86c1-2dd71435c093": "defaults-delete",  # sys_and_interface (dock mineffect)
+    "94cab5ba-eb70-f363-fe46-7289274309cb": "defaults-delete",  # sys_and_interface (KeyRepeat)
+    "957ae859-e96e-74b5-3754-2efd2bcdf027": "defaults-delete",  # sys_and_interface (InitialKeyRepeat)
+    "ac8d6f81-091e-49cf-b476-9de549dbb770": "defaults-delete",  # sys_and_interface (hoverTextEnabled)
+    "bce6df41-71cf-1e73-cb3c-243dcf7058c2": "defaults-delete",  # sys_and_interface (AppleAccentColor)
+    "c8973c96-f0f7-8df7-7d92-6495c4364804": "defaults-delete",  # sys_and_interface (hoverTypingEnabled)
+    "c92420a8-812d-fee1-db6b-c4d21d5af7f7": "defaults-delete",  # sys_and_interface (closeViewHotkeysEnabled)
 }
 
 
@@ -216,24 +226,6 @@ _PRE_COMMAND_FIXES: dict[str, str] = {
     "eb346395-b8fe-03bc-a6e5-a58719b1edce": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
     "ce71ae98-6947-6c18-87ac-cdecb1750e5a": "defaults delete -g AppleInterfaceStyle 2>/dev/null || true",
 }
-
-
-# Keys that don't exist on fresh VMs — defaults delete fails with "Domain not found".
-# The clean VM state is already the desired state for these.
-_SKIP_DEFAULTS_DELETE = [
-    "defaults delete -g KeyRepeat",
-    "defaults delete -g InitialKeyRepeat",
-    "defaults delete -g AppleAccentColor",
-    "defaults delete com.apple.universalaccess hoverTextEnabled",
-    "defaults delete com.apple.universalaccess hoverTypingEnabled",
-    "defaults delete com.apple.universalaccess closeViewHotkeysEnabled",
-]
-
-
-def _skip_defaults_delete(cmd: str) -> bool:
-    """Skip defaults delete for keys that don't exist on fresh VMs."""
-    stripped = cmd.strip()
-    return any(stripped.startswith(s) for s in _SKIP_DEFAULTS_DELETE)
 
 
 def _split_chain(cmd: str) -> str:
@@ -313,9 +305,8 @@ class MacOSWorldToHarbor:
         )
         (task_dir / "task.toml").write_text(cfg, encoding="utf-8")
 
-        # tests/setup/ — pre-agent environment setup
+        # tests/setup/ — pre-agent environment setup (created lazily if needed)
         setup_dir = tests_dir / "setup"
-        setup_dir.mkdir()
 
         pre_command = task.pre_command
         if isinstance(pre_command, dict):
@@ -328,26 +319,29 @@ class MacOSWorldToHarbor:
         if fix:
             cmd_lines.append(fix)
         if pre_command:
+            if "defaults delete" in pre_command:
+                raise ValueError(
+                    f"task {task.task_id} pre_command contains `defaults delete` "
+                    "— add to _EXCLUDED_TASK_IDS or fix the source task"
+                )
             # Strip stray backticks (bad source data in some tasks)
             rewritten = pre_command.lstrip("`")
             rewritten = rewritten.replace("/Users/ec2-user", "/Users/lume")
             rewritten = rewritten.replace("ec2-user", "lume")
             if self.files_dir and "Benchmark_Backup" in pre_command:
+                setup_dir.mkdir(exist_ok=True)
                 _embed_backup_files(pre_command, self.files_dir, setup_dir / "files")
-            split = _split_chain(rewritten)
-            cmd_lines.append("\n".join(
-                line for line in split.split("\n") if not _skip_defaults_delete(line)
-            ))
-        task_cmd = "\n".join(cmd_lines)
+            cmd_lines.append(_split_chain(rewritten))
+        task_cmd = "\n".join(l for l in cmd_lines if l.strip())
 
-        pre_cmd_path = setup_dir / "pre_command.sh"
-        pre_cmd_path.write_text(
-            f"#!/bin/bash\n{task_cmd}\n" if task_cmd else "#!/bin/bash\n",
-            encoding="utf-8",
-        )
-        pre_cmd_path.chmod(0o755)
+        if task_cmd:
+            setup_dir.mkdir(exist_ok=True)
+            pre_cmd_path = setup_dir / "pre_command.sh"
+            pre_cmd_path.write_text(f"#!/bin/bash\n{task_cmd}\n", encoding="utf-8")
+            pre_cmd_path.chmod(0o755)
 
         if task.in_process:
+            setup_dir.mkdir(exist_ok=True)
             (setup_dir / "config.json").write_text(
                 json.dumps({"in_process": task.in_process}, indent=2) + "\n",
                 encoding="utf-8",
