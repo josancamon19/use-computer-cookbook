@@ -44,6 +44,15 @@ JOBS: dict[str, JobRec] = {}
 
 
 def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> dict:
+    # "replay" — deterministic playback of recorded actions. Used by the
+    # gateway's task-detail Replay button. Reads actions.json next to
+    # task.toml and walks each step via the SDK; no LLM call.
+    if model == "replay":
+        return {
+            "import_path": "runner.agents.debug_cua:DebugCUAAgent",
+            "model_name": "debug",
+            "kwargs": {"max_steps": max_steps, "replay": True},
+        }
     if platform == "ios":
         # iOS uses a custom tool schema (tap/swipe/button/...) so generic and
         # macOS-shaped agents don't apply. Only Anthropic for now.
@@ -203,6 +212,12 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
     # Files captured at collect time. Persisted under setup/files/<sha>.<ext>
     # plus a manifest mapping back to the remote_path. The runner's setup.py
     # uploads each before pre_command runs.
+    # actions.json — used by the replay agent (model="replay"). Walks each
+    # step via the SDK with no LLM call.
+    actions = task.get("actions")
+    if actions:
+        (task_dir / "actions.json").write_text(json.dumps({"steps": actions}, indent=2))
+
     files = task.get("files") or []
     if files and platform != "ios":
         files_dir = task_dir / "tests" / "setup" / "files"
