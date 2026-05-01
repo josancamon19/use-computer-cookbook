@@ -140,7 +140,10 @@ async def handle_health(_request: web.Request) -> web.Response:
 
 
 def make_app() -> web.Application:
-    app = web.Application()
+    # /run carries file uploads as base64 in the manifest, so the default
+    # 1 MB body cap rejects PowerPoints/screenshots. Bump to 1 GB —
+    # runner is a same-host sidecar, no external traffic.
+    app = web.Application(client_max_size=1024 * 1024 * 1024)
     app.router.add_post("/run", handle_run)
     app.router.add_get("/jobs/{job_id}", handle_get_job)
     app.router.add_get("/health", handle_health)
