@@ -269,14 +269,25 @@ def write_job_yaml(
 
 def flatten_trial_dir(work_dir: Path) -> Path | None:
     """Harbor writes <work_dir>/jobs/<ts>/<trial>/. harbor-viewer's --jobs mode
-    expects <JOBS_DIR>/<job-id>/<trial>/, so we move the trial up two levels.
+    expects <JOBS_DIR>/<job-id>/<trial>/ + a job-level result.json at the
+    same root. Hoist both up so the viewer recognises the run as a job
+    and the trial as its child.
+
     Returns the new trial dir or None if nothing to flatten."""
     inner_jobs = work_dir / "jobs"
     if not inner_jobs.exists():
         return None
+    moved_trial: Path | None = None
     for ts_dir in sorted(inner_jobs.iterdir()):
         if not ts_dir.is_dir():
             continue
+        # Hoist the job-level result.json so harbor-viewer lists this run.
+        job_result = ts_dir / "result.json"
+        if job_result.exists() and not (work_dir / "result.json").exists():
+            try:
+                (work_dir / "result.json").write_bytes(job_result.read_bytes())
+            except Exception:
+                pass
         for trial in sorted(ts_dir.iterdir()):
             if not trial.is_dir():
                 continue
@@ -285,8 +296,10 @@ def flatten_trial_dir(work_dir: Path) -> Path | None:
                 # Already moved on a prior call (idempotent).
                 return dest
             trial.rename(dest)
-            return dest
-    return None
+            moved_trial = dest
+            break
+        break
+    return moved_trial
 
 
 async def run_harbor(rec: JobRec, task_dir: Path, job_yaml: Path, env: dict) -> None:
