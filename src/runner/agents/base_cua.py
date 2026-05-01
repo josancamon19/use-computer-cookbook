@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -388,8 +389,84 @@ class BaseCUAAgent(BaseAgent):
         assert self.sandbox is not None
         await self._save_final_ax_tree(self.sandbox)
         await self._log_final_state_metrics(self.sandbox)
+        await self._capture_artifacts(context)
         await self.stop_recording(self.sandbox)
         self.checkpoint(context, model, agent_name)
+
+    async def _capture_artifacts(self, context: AgentContext) -> None:
+        """For every file the runner uploaded at setup time, snapshot the
+        original (already on disk) and pull the post-run state back from the VM
+        to <trial>/artifacts/{uploaded,final}/<basename>. Writes a manifest with
+        sizes + a 'changed' flag derived from sha256.
+
+        Best-effort — skipped silently when there are no uploaded files (no
+        manifest), and individual download failures don't kill the run."""
+        if self.task_dir is None:
+            return
+        manifest_path = self.task_dir / "tests" / "setup" / "files" / "manifest.json"
+        if not manifest_path.exists():
+            return
+        try:
+            entries = json.loads(manifest_path.read_text())
+        except Exception as e:
+            self.logger.warning(f"artifacts: manifest parse failed: {e}")
+            return
+        if not entries:
+            return
+
+        env = getattr(context, "environment", None)
+        artifacts_dir = self.logs_dir.parent / "artifacts"
+        uploaded_dir = artifacts_dir / "uploaded"
+        final_dir = artifacts_dir / "final"
+        uploaded_dir.mkdir(parents=True, exist_ok=True)
+        final_dir.mkdir(parents=True, exist_ok=True)
+
+        captured: list[dict[str, Any]] = []
+        for entry in entries:
+            remote = entry.get("remote_path")
+            local_name = entry.get("local_name")
+            if not remote or not local_name:
+                continue
+            src_local = self.task_dir / "tests" / "setup" / "files" / local_name
+            basename = Path(remote).name
+            uploaded_target = uploaded_dir / basename
+            final_target = final_dir / basename
+            uploaded_sha: str | None = None
+            final_sha: str | None = None
+            uploaded_size = 0
+            final_size = 0
+
+            try:
+                if src_local.exists():
+                    data = src_local.read_bytes()
+                    uploaded_target.write_bytes(data)
+                    uploaded_sha = hashlib.sha256(data).hexdigest()
+                    uploaded_size = len(data)
+            except Exception as e:
+                self.logger.warning(f"artifacts: copy uploaded {basename} failed: {e}")
+
+            if env is not None:
+                try:
+                    await env.download_file(remote, final_target)
+                    fbytes = final_target.read_bytes()
+                    final_sha = hashlib.sha256(fbytes).hexdigest()
+                    final_size = len(fbytes)
+                except Exception as e:
+                    self.logger.warning(f"artifacts: download final {remote} failed: {e}")
+
+            captured.append({
+                "name": basename,
+                "remote_path": remote,
+                "uploaded_size": uploaded_size,
+                "final_size": final_size,
+                "changed": (uploaded_sha is not None and final_sha is not None and uploaded_sha != final_sha),
+                "uploaded_sha256": uploaded_sha,
+                "final_sha256": final_sha,
+            })
+
+        if captured:
+            (artifacts_dir / "manifest.json").write_text(json.dumps(captured, indent=2))
+            self.logger.info(f"artifacts: captured {len(captured)} file(s) under {artifacts_dir}")
 
     async def _save_final_ax_tree(self, sandbox: AsyncSandbox) -> None:
         """Snapshot the sandbox's AX tree to <agent>/final_ax_tree.json. Useful

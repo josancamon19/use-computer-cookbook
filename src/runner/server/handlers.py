@@ -121,6 +121,19 @@ async def handle_get_job(request: web.Request) -> web.Response:
     # jobs/<ts>/<trial>/ or already flattened to <trial>/.
     reward, result_json = read_reward(rec.work_dir)
     status = "completed" if rec.returncode == 0 else "failed"
+
+    # Surface uploaded-file artifacts (originals + post-run snapshots) so
+    # direct callers can fetch them without scraping the trial dir.
+    artifacts = None
+    if trial_dir:
+        manifest_path = trial_dir / "artifacts" / "manifest.json"
+        if manifest_path.exists():
+            try:
+                import json as _json
+                artifacts = _json.loads(manifest_path.read_text())
+            except Exception:
+                artifacts = None
+
     return web.json_response({
         "job_id": job_id,
         "status": status,
@@ -132,6 +145,7 @@ async def handle_get_job(request: web.Request) -> web.Response:
         "n_actions": n_actions,
         # The caller may want to render a few result fields without fetching.
         "stats": (result_json or {}).get("stats"),
+        "artifacts": artifacts,
     })
 
 
