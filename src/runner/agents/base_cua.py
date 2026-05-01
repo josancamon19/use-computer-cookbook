@@ -175,16 +175,15 @@ def _annotate_click(png_bytes: bytes, action: dict[str, Any]) -> bytes:
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
-        red = (255, 30, 30, 230)
+        red = (255, 30, 30, 240)
+        radius = 5  # filled red dot
         if point and start:
-            draw.line([start, point], fill=red, width=4)
-            draw.ellipse([start[0]-12, start[1]-12, start[0]+12, start[1]+12], outline=red, width=3)
-            draw.ellipse([point[0]-12, point[1]-12, point[0]+12, point[1]+12], outline=red, width=3)
+            draw.line([start, point], fill=red, width=2)
+            for px, py in (start, point):
+                draw.ellipse([px-radius, py-radius, px+radius, py+radius], fill=red)
         else:
             cx, cy = point or start  # type: ignore
-            draw.ellipse([cx-18, cy-18, cx+18, cy+18], outline=red, width=4)
-            draw.line([(cx-26, cy), (cx+26, cy)], fill=red, width=2)
-            draw.line([(cx, cy-26), (cx, cy+26)], fill=red, width=2)
+            draw.ellipse([cx-radius, cy-radius, cx+radius, cy+radius], fill=red)
         out = Image.alpha_composite(img, overlay).convert("RGB")
         buf = io.BytesIO()
         out.save(buf, format="PNG")
