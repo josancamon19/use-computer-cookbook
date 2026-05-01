@@ -267,6 +267,28 @@ def write_job_yaml(
     }))
 
 
+def flatten_trial_dir(work_dir: Path) -> Path | None:
+    """Harbor writes <work_dir>/jobs/<ts>/<trial>/. harbor-viewer's --jobs mode
+    expects <JOBS_DIR>/<job-id>/<trial>/, so we move the trial up two levels.
+    Returns the new trial dir or None if nothing to flatten."""
+    inner_jobs = work_dir / "jobs"
+    if not inner_jobs.exists():
+        return None
+    for ts_dir in sorted(inner_jobs.iterdir()):
+        if not ts_dir.is_dir():
+            continue
+        for trial in sorted(ts_dir.iterdir()):
+            if not trial.is_dir():
+                continue
+            dest = work_dir / trial.name
+            if dest.exists():
+                # Already moved on a prior call (idempotent).
+                return dest
+            trial.rename(dest)
+            return dest
+    return None
+
+
 async def run_harbor(rec: JobRec, task_dir: Path, job_yaml: Path, env: dict) -> None:
     log = rec.work_dir / "harbor.log"
     with log.open("w") as lf:
@@ -401,7 +423,13 @@ async def handle_get_job(request: web.Request) -> web.Response:
         return web.json_response({"error": "job not found"}, status=404)
 
     jobs_dir = rec.work_dir / "jobs"
-    trial_dir = find_trial_dir(jobs_dir) if jobs_dir.exists() else None
+    # If harbor finished, hoist the inner <jobs/<ts>/<trial>> dir up to
+    # <work_dir>/<trial> so harbor-viewer's --jobs mode can render it. The
+    # viewer expects <JOBS_DIR>/<job-id>/<trial>, not the deeper nesting.
+    flat_trial = None
+    if rec.task.done():
+        flat_trial = flatten_trial_dir(rec.work_dir)
+    trial_dir = flat_trial or (find_trial_dir(jobs_dir) if jobs_dir.exists() else None)
     sandbox_id = peek_sandbox_id(trial_dir) if trial_dir else None
 
     # Build the harbor-viewer URL as a RELATIVE path from the viewer's jobs root.
@@ -441,7 +469,9 @@ async def handle_get_job(request: web.Request) -> web.Response:
             "n_actions": n_actions,
         })
 
-    reward, result_json = read_reward(jobs_dir)
+    # rglob from work_dir picks up result.json whether it's still nested in
+    # jobs/<ts>/<trial>/ or already flattened to <trial>/.
+    reward, result_json = read_reward(rec.work_dir)
     status = "completed" if rec.returncode == 0 else "failed"
     return web.json_response({
         "job_id": job_id,
