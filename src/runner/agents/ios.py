@@ -28,7 +28,7 @@ from harbor.models.agent.context import AgentContext
 from mmini.sandbox import AsyncIOSSandbox
 from PIL import Image
 
-from runner.agents.base_cua import BaseCUAAgent, load_prompt, resize_for_vision
+from runner.agents.base_cua import BaseCUAAgent, _annotate_click, load_prompt, resize_for_vision
 
 litellm.drop_params = True  # Fireworks doesn't accept tool_choice etc; drop instead of erroring
 
@@ -431,7 +431,13 @@ class IOSAgent(BaseCUAAgent):
                 await asyncio.sleep(1.0)
                 ss_bytes = await sandbox.screenshot.take_full_screen()
                 img_name = f"step_{step_idx + 1:03d}.png"
-                (self.images_dir / img_name).write_bytes(ss_bytes)
+                # Annotate with the most recent click/swipe coords for human review.
+                annotated = ss_bytes
+                for tcr in reversed(tool_calls_record):
+                    annotated = _annotate_click(ss_bytes, tcr.get("arguments", {}))
+                    if annotated is not ss_bytes:
+                        break
+                (self.images_dir / img_name).write_bytes(annotated)
                 ss_bytes_api, _, _, _, _ = resize_for_vision(ss_bytes, model)
                 messages.append(
                     {

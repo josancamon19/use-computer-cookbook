@@ -130,6 +130,69 @@ def build_system_prompt(
     )
 
 
+def _extract_coords(action: dict[str, Any]) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    """Pull (point, secondary_point) from any of the action shapes we use:
+       macOS-style:  coordinate=[x,y], start_coordinate=[x,y]
+       iOS-style:    x, y / from_x, from_y, to_x, to_y
+    Returns (single_or_drag_end, drag_start)."""
+    point: tuple[int, int] | None = None
+    secondary: tuple[int, int] | None = None
+    if "coordinate" in action and action["coordinate"]:
+        c = action["coordinate"]
+        point = (int(c[0]), int(c[1]))
+    if "start_coordinate" in action and action["start_coordinate"]:
+        s = action["start_coordinate"]
+        secondary = (int(s[0]), int(s[1]))
+    if point is None and "x" in action and "y" in action:
+        try:
+            point = (int(float(action["x"])), int(float(action["y"])))
+        except (TypeError, ValueError):
+            pass
+    if "to_x" in action and "to_y" in action:
+        try:
+            point = (int(float(action["to_x"])), int(float(action["to_y"])))
+        except (TypeError, ValueError):
+            pass
+    if "from_x" in action and "from_y" in action:
+        try:
+            secondary = (int(float(action["from_x"])), int(float(action["from_y"])))
+        except (TypeError, ValueError):
+            pass
+    return point, secondary
+
+
+def _annotate_click(png_bytes: bytes, action: dict[str, Any]) -> bytes:
+    """Draw a red marker at the click/move/scroll/drag coordinate so the
+    rendered screenshot shows where the agent intended to act. Pass-through
+    when the action has no coordinate."""
+    point, start = _extract_coords(action)
+    if point is None and start is None:
+        return png_bytes
+    try:
+        from PIL import ImageDraw
+
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        red = (255, 30, 30, 230)
+        if point and start:
+            draw.line([start, point], fill=red, width=4)
+            draw.ellipse([start[0]-12, start[1]-12, start[0]+12, start[1]+12], outline=red, width=3)
+            draw.ellipse([point[0]-12, point[1]-12, point[0]+12, point[1]+12], outline=red, width=3)
+        else:
+            cx, cy = point or start  # type: ignore
+            draw.ellipse([cx-18, cy-18, cx+18, cy+18], outline=red, width=4)
+            draw.line([(cx-26, cy), (cx+26, cy)], fill=red, width=2)
+            draw.line([(cx, cy-26), (cx, cy+26)], fill=red, width=2)
+        out = Image.alpha_composite(img, overlay).convert("RGB")
+        buf = io.BytesIO()
+        out.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        _log.warning(f"annotate_click failed: {e}")
+        return png_bytes
+
+
 async def execute_action(
     sandbox: AsyncMacOSSandbox,
     action: dict[str, Any],
@@ -195,9 +258,12 @@ async def execute_action(
     action_elapsed = time.monotonic() - t0
     await asyncio.sleep(2)
     ss = await sandbox.screenshot.take_full_screen()
-    (images_dir / img_name).write_bytes(ss)
+    annotated = _annotate_click(ss, action)
+    (images_dir / img_name).write_bytes(annotated)
     total_elapsed = time.monotonic() - t0
     _log.info(f"action {action_type}: {action_elapsed:.2f}s + screenshot {total_elapsed-action_elapsed:.2f}s = {total_elapsed:.2f}s total")
+    # Return the unannotated bytes so vision-input downscaling sees a clean shot;
+    # the annotation lives only in the persisted file for human review.
     return f"Action '{action_type}' executed", ss, f"images/{img_name}"
 
 
