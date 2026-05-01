@@ -305,14 +305,23 @@ class DebugCUAAgent(BaseCUAAgent):
         (self.images_dir / f"step_{total + 1:03d}.png").write_bytes(final_ss)
 
     def _append_replay_step(self, action: dict, ss_path: Path) -> None:
-        """ATIF step entry per replayed action so trajectory.json reflects the run."""
+        """ATIF step entry per replayed action so trajectory.json reflects the run.
+
+        Stores the screenshot path RELATIVE to the trial dir (e.g.
+        agent/images/step_001.png). Absolute paths break after the runner
+        sidecar flattens <work_dir>/jobs/<ts>/<trial>/ → <work_dir>/<trial>/.
+        """
+        try:
+            rel = ss_path.relative_to(self.logs_dir.parent)
+        except ValueError:
+            rel = Path("agent/images") / ss_path.name
         self.steps.append({
             "step_id": len(self.steps) + 1,
             "source": "agent",
             "tool_calls": [{"function": action.get("function"), "args": action.get("args") or {}}],
             "observation": {"results": [{
                 "content": [
-                    {"type": "image", "source": {"media_type": "image/png", "path": str(ss_path)}}
+                    {"type": "image", "source": {"media_type": "image/png", "path": str(rel)}}
                 ]
             }]},
         })
