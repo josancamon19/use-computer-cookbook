@@ -172,11 +172,15 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
                 payload = json.dumps({"specs": spec})
                 grader_sh += [
                     f"PAYLOAD={json.dumps(payload)}",
-                    'if ! curl -sf -H "Authorization: Bearer $MMINI_API_KEY" '
+                    # Capture full response so per-checker results survive
+                    # for the dashboard to display.
+                    'RESP=$(curl -sf -H "Authorization: Bearer $MMINI_API_KEY" '
                     '-H "Content-Type: application/json" '
                     '-X POST "$GATEWAY_URL/v1/sandboxes/$SANDBOX_ID/grade" '
-                    '-d "$PAYLOAD" 2>/dev/null '
-                    "| grep -qE '\"passed\"[[:space:]]*:[[:space:]]*true'; then",
+                    '-d "$PAYLOAD" 2>/dev/null)',
+                    'mkdir -p "${PREFIX}/logs/verifier"',
+                    'echo "$RESP" > "${PREFIX}/logs/verifier/grader_checks.json"',
+                    'if ! echo "$RESP" | grep -qE \'"passed"[[:space:]]*:[[:space:]]*true\'; then',
                     '  echo "0" > "$REWARD"; echo "Score: 0"; exit 0',
                     "fi",
                 ]
