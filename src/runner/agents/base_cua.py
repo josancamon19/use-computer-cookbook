@@ -6,11 +6,13 @@ import asyncio
 import io
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
@@ -319,6 +321,7 @@ class BaseCUAAgent(BaseAgent):
         """Common teardown: stop recording, write trajectory, set token counts."""
         assert self.sandbox is not None
         await self._save_final_ax_tree(self.sandbox)
+        await self._log_final_state_metrics(self.sandbox)
         await self.stop_recording(self.sandbox)
         self.checkpoint(context, model, agent_name)
 
@@ -331,6 +334,78 @@ class BaseCUAAgent(BaseAgent):
             (self.logs_dir / "final_ax_tree.json").write_text(json.dumps(tree, indent=2))
         except Exception as e:  # noqa: BLE001
             self.logger.warning(f"Failed to capture final AX tree: {e}")
+
+    async def _log_final_state_metrics(self, sandbox: AsyncSandbox) -> None:
+        """Compute screenshot_similarity + a11y_match_ratio against the human's
+        recorded final state. Only runs when expected_final.json (shipped by
+        the gateway for collected tasks) is present in the task dir.
+
+        Metrics land in:
+          - logger.info (visible in runner stdout / harbor.log)
+          - <logs_dir>/verifier-metrics.json (machine-readable)
+        """
+        if self.task_dir is None:
+            return
+        expected_path = self.task_dir / "expected_final.json"
+        if not expected_path.exists():
+            return
+        try:
+            expected = json.loads(expected_path.read_text())
+        except Exception as e:
+            self.logger.warning(f"expected_final.json parse failed: {e}")
+            return
+
+        metrics: dict[str, Any] = {}
+
+        # Final screenshot vs expected
+        try:
+            actual_bytes = await sandbox.screenshot.take_full_screen()
+            ss_path = self.logs_dir / "final_screenshot.png"
+            ss_path.write_bytes(actual_bytes)
+            ref_filename = expected.get("screenshot_filename")
+            ref_task_id = expected.get("task_id")
+            if ref_filename and ref_task_id:
+                ref_bytes = await self._fetch_reference_screenshot(ref_task_id, ref_filename)
+                if ref_bytes:
+                    sim = _screenshot_similarity(actual_bytes, ref_bytes)
+                    metrics["screenshot_similarity"] = sim
+                    self.logger.info(f"final-state metrics: screenshot_similarity={sim:.3f}")
+        except Exception as e:
+            self.logger.warning(f"screenshot similarity failed: {e}")
+
+        # Final a11y vs expected
+        try:
+            ref_a11y = expected.get("a11y_after")
+            if ref_a11y is not None:
+                actual_a11y = await sandbox.display.get_windows()
+                matched, total = _a11y_match(actual_a11y, ref_a11y)
+                metrics["a11y_match"] = f"{matched}/{total}"
+                metrics["a11y_match_ratio"] = (matched / total) if total else 0.0
+                self.logger.info(f"final-state metrics: a11y_match={matched}/{total}")
+        except Exception as e:
+            self.logger.warning(f"a11y match failed: {e}")
+
+        if metrics:
+            (self.logs_dir / "verifier-metrics.json").write_text(json.dumps(metrics, indent=2))
+
+    async def _fetch_reference_screenshot(self, task_id: str, filename: str) -> bytes | None:
+        """GET <gateway>/admin/tasks/{task_id}/images/{filename}. Returns None on
+        any failure — metrics are best-effort."""
+        gateway = os.environ.get("MMINI_GATEWAY_URL") or os.environ.get("GATEWAY_URL", "")
+        api_key = os.environ.get("MMINI_API_KEY", "")
+        if not gateway:
+            return None
+        url = f"{gateway.rstrip('/')}/admin/tasks/{task_id}/images/{filename}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+                if resp.status_code != 200:
+                    self.logger.warning(f"reference screenshot fetch {resp.status_code}: {url}")
+                    return None
+                return resp.content
+        except Exception as e:
+            self.logger.warning(f"reference screenshot fetch failed: {e}")
+            return None
 
     async def start_recording(self, sandbox: AsyncSandbox) -> None:
         try:
@@ -372,3 +447,67 @@ class BaseCUAAgent(BaseAgent):
             self.logger.warning(
                 f"Recording save failed: {type(e).__name__}: {e}"
             )
+
+
+def _screenshot_similarity(a: bytes, b: bytes) -> float:
+    """Pixel-wise similarity in [0,1]. 1.0 = identical, 0.0 = max difference.
+    Resizes b to a's dimensions if they differ. Uses mean absolute pixel
+    difference normalized by 255."""
+    try:
+        ia = Image.open(io.BytesIO(a)).convert("RGB")
+        ib = Image.open(io.BytesIO(b)).convert("RGB")
+    except Exception:
+        return 0.0
+    if ib.size != ia.size:
+        ib = ib.resize(ia.size)
+    pa = list(ia.getdata())
+    pb = list(ib.getdata())
+    if not pa:
+        return 0.0
+    diff_sum = 0
+    for (r1, g1, b1), (r2, g2, b2) in zip(pa, pb):
+        diff_sum += abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
+    max_diff = len(pa) * 255 * 3
+    return 1.0 - (diff_sum / max_diff if max_diff else 0.0)
+
+
+def _a11y_match(actual: Any, expected: Any) -> tuple[int, int]:
+    """Count node signatures from `expected` that also appear in `actual`.
+    Returns (matched, total). Signature = (role, label-or-name-or-title).
+    Lossy on purpose — coordinates / IDs are too volatile for replay."""
+    actual_sigs = _collect_a11y_signatures(actual)
+    expected_sigs = _collect_a11y_signatures(expected)
+    if not expected_sigs:
+        return (0, 0)
+    matched = sum(1 for sig in expected_sigs if sig in actual_sigs)
+    return (matched, len(expected_sigs))
+
+
+def _collect_a11y_signatures(node: Any, out: set | None = None) -> set:
+    if out is None:
+        out = set()
+    if isinstance(node, dict):
+        role = (
+            node.get("role")
+            or node.get("AXRole")
+            or node.get("type")
+            or ""
+        )
+        ident = (
+            node.get("AXLabel")
+            or node.get("AXTitle")
+            or node.get("AXValue")
+            or node.get("label")
+            or node.get("name")
+            or node.get("title")
+            or node.get("text")
+            or ""
+        )
+        if role or ident:
+            out.add((str(role)[:40], str(ident)[:80]))
+        for v in node.values():
+            _collect_a11y_signatures(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _collect_a11y_signatures(v, out)
+    return out

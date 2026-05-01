@@ -218,6 +218,13 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
     if actions:
         (task_dir / "actions.json").write_text(json.dumps({"steps": actions}, indent=2))
 
+    # expected_final.json — base_cua reads this in post_run to compute
+    # screenshot_similarity + a11y_match_ratio against the human's final
+    # state. Set only for collected-task runs; adhoc has no reference.
+    expected = task.get("expected_final")
+    if expected:
+        (task_dir / "expected_final.json").write_text(json.dumps(expected, indent=2))
+
     files = task.get("files") or []
     if files and platform != "ios":
         files_dir = task_dir / "tests" / "setup" / "files"
