@@ -310,18 +310,26 @@ class DebugCUAAgent(BaseCUAAgent):
         Stores the screenshot path RELATIVE to the trial dir (e.g.
         agent/images/step_001.png). Absolute paths break after the runner
         sidecar flattens <work_dir>/jobs/<ts>/<trial>/ → <work_dir>/<trial>/.
+
+        Shape mirrors anthropic_cua (message field, text+image content) so
+        harbor-viewer's code-block component doesn't crash on .split() of
+        undefined fields.
         """
         try:
             rel = ss_path.relative_to(self.logs_dir.parent)
         except ValueError:
             rel = Path("agent/images") / ss_path.name
+        fn = action.get("function") or "?"
+        args = action.get("args") or {}
         self.steps.append({
             "step_id": len(self.steps) + 1,
             "source": "agent",
-            "tool_calls": [{"function": action.get("function"), "args": action.get("args") or {}}],
+            "message": f"[replay] {fn}({args})",
+            "tool_calls": [{"function": fn, "args": args}],
             "observation": {"results": [{
                 "content": [
-                    {"type": "image", "source": {"media_type": "image/png", "path": str(rel)}}
+                    {"type": "text", "text": f"step screenshot: {rel}"},
+                    {"type": "image", "source": {"media_type": "image/png", "path": str(rel)}},
                 ]
             }]},
         })
