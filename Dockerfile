@@ -17,4 +17,4 @@ RUN uv sync --frozen
 RUN uv pip install aiohttp==3.10.10 pyyaml
 
 EXPOSE 8090
-CMD ["uv", "run", "python", "server.py"]
+CMD ["uv", "run", "python", "-m", "runner.server"]
