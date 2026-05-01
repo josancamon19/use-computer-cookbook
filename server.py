@@ -398,11 +398,10 @@ async def handle_run(request: web.Request) -> web.Response:
     gateway_api_key = body.get("gateway_api_key") or os.environ.get("MMINI_API_KEY", "")
 
     task_id = (body.get("task_id") or "task")[:16]
-    # Prefix is "dashrun-" not "modelrun-" because harbor-viewer's
-    # JobScanner.list_jobs() filters "modelrun-*" out of the top-level
-    # listing (upstream design choice to hide single-task spawns from
-    # the main viewer). We want our debug viewer to list these.
-    job_id = f"dashrun-{task_id}-{int(time.time())}"
+    # Prefer the gateway-supplied job_id (a layman label like
+    # "replay-37baaa19-7604387" or "adhoc-open-calculator-7604387"). Falls
+    # back to a generic stamp if missing for direct callers of /run.
+    job_id = body.get("job_id") or f"run-{task_id}-{int(time.time())}"
     work_dir = JOBS_DIR / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     task_dir = work_dir / "task"
