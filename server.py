@@ -12,6 +12,8 @@ completes the UI can deep-link straight to `harbor view` for inspection.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import re
@@ -197,6 +199,26 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
             pc = setup_dir / "pre_command.sh"
             pc.write_text("#!/bin/bash\n" + pre + "\n")
             pc.chmod(0o755)
+
+    # Files captured at collect time. Persisted under setup/files/<sha>.<ext>
+    # plus a manifest mapping back to the remote_path. The runner's setup.py
+    # uploads each before pre_command runs.
+    files = task.get("files") or []
+    if files and platform != "ios":
+        files_dir = task_dir / "tests" / "setup" / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+        manifest = []
+        for f in files:
+            remote = f.get("remote_path") or ""
+            content_b64 = f.get("content_b64") or ""
+            if not remote or not content_b64:
+                continue
+            ext = Path(remote).suffix
+            local_name = hashlib.sha256(remote.encode()).hexdigest()[:16] + ext
+            (files_dir / local_name).write_bytes(base64.b64decode(content_b64))
+            manifest.append({"remote_path": remote, "local_name": local_name})
+        if manifest:
+            (files_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
 
 def write_job_yaml(

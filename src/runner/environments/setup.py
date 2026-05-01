@@ -31,6 +31,10 @@ async def run_macos_setup(env: MminiEnvironment) -> None:
         env.logger.info("uploading test.sh")
         await env.upload_file(test_script, "/tests/test.sh")
 
+    # Files captured at collect time — re-upload to the freshly spawned
+    # sandbox so the agent has the same starting state the human had.
+    await _upload_collected_files(env, setup_dir)
+
     pre_cmd_path = setup_dir / "pre_command.sh"
     if pre_cmd_path.exists():
         await _run_pre_command(env, pre_cmd_path.read_text().strip())
@@ -47,6 +51,30 @@ async def run_macos_setup(env: MminiEnvironment) -> None:
             env._in_process_step = ip[1]
 
     env.logger.info("task setup complete")
+
+
+async def _upload_collected_files(env: MminiEnvironment, setup_dir: Path) -> None:
+    """Upload files persisted at collect time. Manifest at setup/files/manifest.json
+    maps {remote_path, local_name} pairs."""
+    manifest_path = setup_dir / "files" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        entries = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        env.logger.warning(f"collected-files manifest parse failed: {exc}")
+        return
+    for entry in entries:
+        remote = entry.get("remote_path")
+        local = entry.get("local_name")
+        if not remote or not local:
+            continue
+        local_path = setup_dir / "files" / local
+        if not local_path.exists():
+            env.logger.warning(f"collected file missing on disk: {local_path}")
+            continue
+        env.logger.info(f"uploading collected file → {remote} ({local_path.stat().st_size}B)")
+        await env.upload_file(local_path, remote)
 
 
 async def _run_pre_command(env: MminiEnvironment, raw: str) -> None:
