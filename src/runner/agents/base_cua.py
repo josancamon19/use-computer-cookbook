@@ -413,7 +413,8 @@ class BaseCUAAgent(BaseAgent):
         if not entries:
             return
 
-        env = getattr(context, "environment", None)
+        # Use a non-standard filename — harbor's runtime overwrites
+        # artifacts/manifest.json after post_run with its own archive listing.
         artifacts_dir = self.logs_dir.parent / "artifacts"
         uploaded_dir = artifacts_dir / "uploaded"
         final_dir = artifacts_dir / "final"
@@ -444,14 +445,13 @@ class BaseCUAAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning(f"artifacts: copy uploaded {basename} failed: {e}")
 
-            if env is not None:
-                try:
-                    await env.download_file(remote, final_target)
-                    fbytes = final_target.read_bytes()
-                    final_sha = hashlib.sha256(fbytes).hexdigest()
-                    final_size = len(fbytes)
-                except Exception as e:
-                    self.logger.warning(f"artifacts: download final {remote} failed: {e}")
+            try:
+                await self.sandbox.download_file(remote, final_target)  # type: ignore[union-attr]
+                fbytes = final_target.read_bytes()
+                final_sha = hashlib.sha256(fbytes).hexdigest()
+                final_size = len(fbytes)
+            except Exception as e:
+                self.logger.warning(f"artifacts: download final {remote} failed: {e}")
 
             captured.append({
                 "name": basename,
@@ -464,7 +464,7 @@ class BaseCUAAgent(BaseAgent):
             })
 
         if captured:
-            (artifacts_dir / "manifest.json").write_text(json.dumps(captured, indent=2))
+            (artifacts_dir / "uploaded_files.json").write_text(json.dumps(captured, indent=2))
             self.logger.info(f"artifacts: captured {len(captured)} file(s) under {artifacts_dir}")
 
     async def _save_final_ax_tree(self, sandbox: AsyncSandbox) -> None:

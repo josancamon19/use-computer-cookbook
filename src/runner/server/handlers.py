@@ -126,7 +126,7 @@ async def handle_get_job(request: web.Request) -> web.Response:
     # direct callers can fetch them without scraping the trial dir.
     artifacts = None
     if trial_dir:
-        manifest_path = trial_dir / "artifacts" / "manifest.json"
+        manifest_path = trial_dir / "artifacts" / "uploaded_files.json"
         if manifest_path.exists():
             try:
                 import json as _json
