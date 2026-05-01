@@ -1,9 +1,9 @@
-# Harbor job config for tasks exported via collected/export.py.
-# Today: iOS only. Pick the active agent by uncommenting exactly one block.
+# Harbor job config for iOS tasks exported via collected/export.py.
+# Pick the active agent by uncommenting exactly one block.
 #
 #   cd runner
 #   uv run harbor run \
-#     -c src/runner/configs/job-collected.yaml \
+#     -c src/runner/configs/job-collected-ios.yaml \
 #     -p datasets/collected/ios/<task-name>
 
 jobs_dir: ./jobs
@@ -15,25 +15,25 @@ environment:
     import_path: runner.environments.mmini:MminiEnvironment
     kwargs:
         gateway_url: http://10.10.10.2:8081
-        platform: macos
+        platform: ios
     delete: true
 
 agents:
-    # Replay collected actions — no LLM, walks <task>/actions.json
-    - import_path: runner.agents.debug_cua:DebugCUAAgent
-      model_name: debug
+    # Anthropic Claude Sonnet 4.6
+    - import_path: runner.agents.ios:IOSAgent
+      model_name: anthropic/claude-sonnet-4-6
       kwargs:
-          replay: true
           max_steps: 50
 
     # ------------------------------------------------------------------
     # Other agents — uncomment one at a time:
     # ------------------------------------------------------------------
 
-    # Anthropic Claude Sonnet 4.6
-    # - import_path: runner.agents.ios:IOSAgent
-    #   model_name: anthropic/claude-sonnet-4-6
+    # Replay collected actions — no LLM, walks <task>/actions.json
+    # - import_path: runner.agents.debug_cua:DebugCUAAgent
+    #   model_name: debug
     #   kwargs:
+    #       replay: true
     #       max_steps: 30
 
     # Smoke-test infra — bangs on every endpoint deterministically

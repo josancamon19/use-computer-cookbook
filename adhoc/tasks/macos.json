@@ -1,0 +1,8 @@
+{
+    "platform": "macos",
+    "tasks": [
+        "Add Yumi Asai to contact with mobile number 96981 under the group \"Work\". If the group does not exist, then create it.",
+        "Launch Disk Utility and create an empty image called Empty. Keep the settings default but change the size to 50MB.",
+        "Go to Launchpad, click the Games folder, open Chess. Then, start a new Computer vs. Human game."
+    ]
+}

@@ -11,8 +11,9 @@ RUNNER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RUNNER_DIR))
 from server import write_task_dir  # noqa: E402
 
-ADHOC_ROOT = RUNNER_DIR / "datasets" / "adhoc" / "ios"
-DEFAULT_JSON = Path(__file__).resolve().parent / "tasks.json"
+ADHOC_BASE = RUNNER_DIR / "datasets" / "adhoc"
+DEFAULT_JSON = Path(__file__).resolve().parent / "tasks" / "ios.json"
+DEFAULT_PLATFORM = "ios"
 DEFAULT_DEVICE_TYPE = "iPhone-17-Pro"
 DEFAULT_RUNTIME = "iOS-26-4"
 
@@ -32,14 +33,20 @@ def _normalize(spec: object) -> dict:
     raise ValueError("input must be a JSON list or object")
 
 
-def materialize(spec: dict, out_root: Path) -> list[Path]:
+def materialize(spec: dict, base_root: Path) -> list[Path]:
     s = _normalize(spec)
+    platform = (s.get("platform") or DEFAULT_PLATFORM).strip().lower()
+    if platform not in ("ios", "macos"):
+        raise ValueError(f"unknown platform: {platform!r} (want 'ios' or 'macos')")
+    # iOS pins a specific simulator. macOS picks any warm VM at run time, no
+    # device_type/runtime needed.
     default_device = (s.get("device_type") or DEFAULT_DEVICE_TYPE).strip()
     default_runtime = (s.get("runtime") or DEFAULT_RUNTIME).strip()
     tasks = s.get("tasks") or []
     if not tasks:
         raise ValueError("no tasks provided")
 
+    out_root = base_root / platform
     out_root.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     used_names: set[str] = set()
@@ -67,24 +74,24 @@ def materialize(spec: dict, out_root: Path) -> list[Path]:
 
         out_dir = out_root / name
         out_dir.mkdir(parents=True, exist_ok=True)
-        write_task_dir(
-            out_dir,
-            {
-                "instruction": instruction,
-                "pre_command": "",
-                "grading_command": [],  # → "Score: 0" stub, no verifier
-                "device_type": (t.get("device_type") or default_device).strip(),
-                "runtime": (t.get("runtime") or default_runtime).strip(),
-            },
-            platform="ios",
-        )
+        task_payload: dict = {
+            "instruction": instruction,
+            "pre_command": "",
+            "grading_command": [],  # → "Score: 0" stub, no verifier
+        }
+        if platform == "ios":
+            task_payload["device_type"] = (t.get("device_type") or default_device).strip()
+            task_payload["runtime"] = (t.get("runtime") or default_runtime).strip()
+        write_task_dir(out_dir, task_payload, platform=platform)
         written.append(out_dir)
         print(f"  wrote {out_dir.relative_to(RUNNER_DIR)}")
     return written
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Export adhoc iOS tasks from a JSON list")
+    ap = argparse.ArgumentParser(
+        description="Export adhoc tasks (iOS or macOS) from a JSON list"
+    )
     ap.add_argument(
         "json",
         nargs="?",
@@ -92,22 +99,29 @@ def main() -> int:
         help=f"Path to tasks JSON (default: {DEFAULT_JSON.relative_to(RUNNER_DIR)})",
     )
     ap.add_argument(
-        "--clean", action="store_true", help="Wipe datasets/adhoc/ios first"
+        "--clean",
+        action="store_true",
+        help="Wipe the platform's datasets/adhoc/<platform>/ dir first",
     )
     args = ap.parse_args()
 
     spec = json.loads(Path(args.json).read_text())
+    platform = (spec.get("platform") if isinstance(spec, dict) else None) or DEFAULT_PLATFORM
+    plat_root = ADHOC_BASE / platform.strip().lower()
 
-    if args.clean and ADHOC_ROOT.exists():
-        print(f"wiping {ADHOC_ROOT.relative_to(RUNNER_DIR)}")
-        shutil.rmtree(ADHOC_ROOT)
+    if args.clean and plat_root.exists():
+        print(f"wiping {plat_root.relative_to(RUNNER_DIR)}")
+        shutil.rmtree(plat_root)
 
-    written = materialize(spec, ADHOC_ROOT)
-    print(f"\nexported {len(written)} task(s) to {ADHOC_ROOT.relative_to(RUNNER_DIR)}")
+    written = materialize(spec, ADHOC_BASE)
+    print(f"\nexported {len(written)} task(s) to {plat_root.relative_to(RUNNER_DIR)}")
     print("\nrun with:")
-    print(
-        f"  uv run harbor run -c src/runner/configs/job-collected.yaml -p {ADHOC_ROOT.relative_to(RUNNER_DIR)}"
+    cfg = (
+        "src/runner/configs/job-collected-ios.yaml"
+        if platform.strip().lower() == "ios"
+        else "src/runner/configs/job-collected.yaml"
     )
+    print(f"  uv run harbor run -c {cfg} -p {plat_root.relative_to(RUNNER_DIR)}")
     return 0
 
 
