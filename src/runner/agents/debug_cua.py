@@ -321,11 +321,19 @@ class DebugCUAAgent(BaseCUAAgent):
             rel = Path("agent/images") / ss_path.name
         fn = action.get("function") or "?"
         args = action.get("args") or {}
+        # Harbor viewer's trial.tsx renders tc.arguments via
+        # JSON.stringify(tc.arguments, null, 2) — when undefined, the code-block
+        # component crashes on .split("\n"). Include both shapes (args dict
+        # for our SDK + arguments JSON-string for the viewer).
         self.steps.append({
             "step_id": len(self.steps) + 1,
             "source": "agent",
             "message": f"[replay] {fn}({args})",
-            "tool_calls": [{"function": fn, "args": args}],
+            "tool_calls": [{
+                "function": fn,
+                "args": args,
+                "arguments": json.dumps(args),
+            }],
             "observation": {"results": [{
                 "content": [
                     {"type": "text", "text": f"step screenshot: {rel}"},
