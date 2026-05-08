@@ -4,12 +4,13 @@ Runnable examples for use.computer: macOS tasks, iOS simulator tasks, replay/deb
 
 ## Setup
 
-```bash
-uv sync
-export ANTHROPIC_API_KEY=...
-export MMINI_API_KEY=...      # Harbor configs against admin/dev gateway
-export GATEWAY_API_KEY=...    # run.py against admin/dev gateway
-```
+Install deps with `uv sync`.
+
+Environment variables:
+
+- `ANTHROPIC_API_KEY`: required for Anthropic agents.
+- `MMINI_API_KEY`: required when Harbor configs point at the admin/dev gateway.
+- `GATEWAY_API_KEY`: required by `run.py` when it points at the admin/dev gateway.
 
 For reservation API keys, point configs or SDK calls at `https://api.use.computer` and use the `mk_live_...` key from the reservation dashboard.
 
@@ -39,7 +40,7 @@ Useful knobs live in the YAML files: `gateway_url`, `platform`, `n_concurrent_tr
 
 ## Task Shape
 
-Each task directory is normal Harbor format:
+Each task directory is normal [Harbor task format](https://harborframework.com/docs/tasks):
 
 ```text
 instruction.md
