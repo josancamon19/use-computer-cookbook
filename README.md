@@ -27,32 +27,22 @@ uv run harbor run -c src/runner/configs/job-collected-ios.yaml --env-file .env
 
 For more Harbor CLI options, see the [Harbor docs](https://harborframework.com/docs/run-jobs/run-evals).
 
-## job.yaml
+## Configs
 
-A job config tells Harbor what to run:
+- `src/runner/configs/job.yaml`: curated macOSWorld set.
+- `src/runner/configs/job-adhoc-macos.yaml`: free-form macOS prompts from `datasets/adhoc/macos`.
+- `src/runner/configs/job-collected.yaml`: collected macOS tasks, defaulting to replay/debug.
+- `src/runner/configs/job-collected-ios.yaml`: collected iOS simulator tasks.
 
-```yaml
-jobs_dir: jobs
-n_attempts: 1
-orchestrator:
-    type: local
-    n_concurrent_trials: 16
-environment:
-    import_path: runner.environments.mmini:MminiEnvironment
-    kwargs:
-        gateway_url: https://api.use.computer
-        platform: macos
-    delete: true
-agents:
-    - import_path: runner.agents.anthropic_cua:AnthropicCUAAgent
-      model_name: anthropic/claude-sonnet-4-6
-      kwargs:
-          max_steps: 50
-datasets:
-    - path: datasets/macosworld_ready
-```
+Each config sets the task dataset, gateway URL, platform, concurrency, cleanup behavior, and active agent. See the [Harbor run docs](https://harborframework.com/docs/run-jobs/run-evals) for the full config format.
 
-Useful fields: `gateway_url`, `platform`, `n_concurrent_trials`, `model_name`, `max_steps`, and `datasets`.
+## Agents
+
+- `AnthropicCUAAgent`: Claude computer-use agent for macOS screenshots, mouse, keyboard, and shell-backed tasks.
+- `IOSAgent`: Claude-driven iOS simulator agent using tap, swipe, app, appearance, and screenshot tools.
+- `DebugCUAAgent` with `replay: true`: replays collected `actions.json` without an LLM.
+- `DebugCUAAgent` with `realistic: true`: deterministic endpoint smoke test for infra.
+- `GenericCUAAgent`: OpenAI-compatible chat/completions agent for Fireworks or other OpenAI-style model endpoints.
 
 ## Task Shape
 
