@@ -9,34 +9,50 @@ Install deps with `uv sync`.
 Environment variables:
 
 - `ANTHROPIC_API_KEY`: required for Anthropic agents.
-- `MMINI_API_KEY`: required when Harbor configs point at the admin/dev gateway.
-- `GATEWAY_API_KEY`: required by `run.py` when it points at the admin/dev gateway.
+- `MMINI_API_KEY`: use `mk_live_...` for `https://api.use.computer`, or the master key for admin/dev gateway configs.
 
-For reservation API keys, point configs or SDK calls at `https://api.use.computer` and use the `mk_live_...` key from the reservation dashboard.
+Point customer configs at `https://api.use.computer`. Point internal/dev configs at the relevant admin/dev gateway.
 
-## Run One macOS Task
-
-```bash
-uv run python run.py --task "productivity__*" --agent anthropic --model claude-sonnet-4-6 --max-steps 30
-```
-
-`run.py` creates a sandbox, runs the task setup, drives the agent, grades when a verifier exists, and writes outputs under `results/`.
-
-## Run Harbor Jobs
+## Run
 
 ```bash
-# macOSWorld curated set
-uv run harbor run -c src/runner/configs/job.yaml -p datasets/macosworld_ready
-
-# collected iOS task
-uv run harbor run -c src/runner/configs/job-collected-ios.yaml -p datasets/collected/ios/<task-name>
-
-# ad hoc macOS prompts
-uv run python adhoc/export.py adhoc/tasks/macos.json --clean
-uv run harbor run -c src/runner/configs/job-adhoc-macos.yaml -p datasets/adhoc/macos
+uv run harbor run -c src/runner/configs/job.yaml --env-file .env
 ```
 
-Useful knobs live in the YAML files: `gateway_url`, `platform`, `n_concurrent_trials`, model, and `max_steps`.
+Use a different config for iOS or collected tasks:
+
+```bash
+uv run harbor run -c src/runner/configs/job-collected-ios.yaml --env-file .env
+```
+
+For more Harbor CLI options, see the [Harbor docs](https://harborframework.com/docs/run-jobs/run-evals).
+
+## job.yaml
+
+A job config tells Harbor what to run:
+
+```yaml
+jobs_dir: jobs
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 16
+environment:
+    import_path: runner.environments.mmini:MminiEnvironment
+    kwargs:
+        gateway_url: https://api.use.computer
+        platform: macos
+    delete: true
+agents:
+    - import_path: runner.agents.anthropic_cua:AnthropicCUAAgent
+      model_name: anthropic/claude-sonnet-4-6
+      kwargs:
+          max_steps: 50
+datasets:
+    - path: datasets/macosworld_ready
+```
+
+Useful fields: `gateway_url`, `platform`, `n_concurrent_trials`, `model_name`, `max_steps`, and `datasets`.
 
 ## Task Shape
 
