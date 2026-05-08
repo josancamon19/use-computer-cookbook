@@ -36,6 +36,12 @@ For more Harbor CLI options, see the [Harbor docs](https://harborframework.com/d
 
 Each config sets the task dataset, gateway URL, platform, concurrency, cleanup behavior, and active agent. See the [Harbor run docs](https://harborframework.com/docs/run-jobs/run-evals) for the full config format.
 
+## Task Sources
+
+- `adhoc/`: hand-written prompt lists. `adhoc/export.py` turns `adhoc/tasks/*.json` into Harbor task directories under `datasets/adhoc/<platform>`.
+- `collected/`: tasks recorded in the use.computer collection UI (`/collect` and `/collect-ios`) and stored by the gateway. `collected/export.py` pulls them from `/admin/tasks` and writes Harbor tasks under `datasets/collected/<platform>`, including replay actions and verifier/setup files when present.
+- `datasets/macosworld_ready`: curated macOSWorld tasks already converted into Harbor format.
+
 ## Agents
 
 - `AnthropicCUAAgent`: Claude computer-use agent for macOS screenshots, mouse, keyboard, and shell-backed tasks.
