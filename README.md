@@ -25,7 +25,7 @@ Use a different config for iOS or collected tasks:
 uv run harbor run -c src/runner/configs/job-collected-ios.yaml --env-file .env
 ```
 
-For more Harbor CLI options, see the [Harbor docs](https://harborframework.com/docs/run-jobs/run-evals).
+Harbor run jobs docs: https://harborframework.com/docs/run-jobs/run-evals
 
 ## Configs
 
@@ -34,7 +34,9 @@ For more Harbor CLI options, see the [Harbor docs](https://harborframework.com/d
 - `src/runner/configs/job-collected.yaml`: collected macOS tasks, defaulting to replay/debug.
 - `src/runner/configs/job-collected-ios.yaml`: collected iOS simulator tasks.
 
-Each config sets the task dataset, gateway URL, platform, concurrency, cleanup behavior, and active agent. See the [Harbor run docs](https://harborframework.com/docs/run-jobs/run-evals) for the full config format.
+Each config sets the task dataset, gateway URL, platform, concurrency, cleanup behavior, and active agent.
+
+Harbor run jobs docs: https://harborframework.com/docs/run-jobs/run-evals
 
 ## Task Sources
 
@@ -52,7 +54,9 @@ Each config sets the task dataset, gateway URL, platform, concurrency, cleanup b
 
 ## Task Shape
 
-Each task directory is normal [Harbor task format](https://harborframework.com/docs/tasks):
+Each task directory is normal Harbor task format.
+
+Harbor task format docs: https://harborframework.com/docs/tasks
 
 ```text
 instruction.md
