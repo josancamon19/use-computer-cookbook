@@ -59,6 +59,14 @@ async def handle_run(request: web.Request) -> web.Response:
         env["MMINI_API_KEY"] = gateway_api_key
     env["MMINI_GATEWAY_URL"] = gateway_url
 
+    # Per-customer Anthropic key. When the gateway forwards a customer-scoped
+    # run it sends the user's saved sk-ant-... here so the agent runs against
+    # the user's account, not the server's. Master runs leave this unset and
+    # fall back to whatever ANTHROPIC_API_KEY is already in env.
+    anthropic_key = body.get("anthropic_api_key")
+    if anthropic_key:
+        env["ANTHROPIC_API_KEY"] = anthropic_key
+
     rec = JobRec(
         job_id=job_id,
         work_dir=work_dir,
