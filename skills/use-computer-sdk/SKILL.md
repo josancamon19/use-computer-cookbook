@@ -1,0 +1,78 @@
+---
+name: use-computer-sdk
+description: Write Python that drives macOS or iOS sandboxes through the use-computer SDK (use.computer). Use this skill whenever the user is building, scripting, or debugging anything that touches `use_computer.Computer()`, `mac.exec_ssh`, `mac.mouse`, `mac.keyboard`, `mac.screenshot`, `ios.input.tap`/`swipe`/`type_text`, `ios.apps.open_url`, screen recording, file upload/download, or sandbox keepalive — including computer-use agents, evals, demos, and the use-computer-cookbook's Harbor jobs. Trigger even when the user just says "rent a Mac mini", "open Safari in a sandbox", "tap the screen on iOS", or "drive a simulator from Python" — they almost certainly want this SDK.
+---
+
+# use-computer SDK
+
+The use-computer Python SDK rents an ephemeral macOS or iOS sandbox from a real Mac mini fleet at [use.computer](https://use.computer) and gives you a tight DSL to drive it. Every call hits `https://api.use.computer/v1/...` with a `mk_live_*` bearer token. The cookbook (this repo) wraps that with a Harbor environment + agents for benchmark-style runs.
+
+This SKILL.md is the entry point. Read the section that matches what the user is doing, then load the relevant `references/` file for the full surface; don't dump everything into your reply.
+
+## Mental model
+
+```
+Computer(api_key=…) ──create()──▶ MacOSSandbox    .mouse / .keyboard / .screenshot / .recording / .exec_ssh / .upload / .download_file
+                                  IOSSandbox      .input  / .apps     / .screenshot / .recording / .upload / .download_file
+                                  (both share .display, keepalive, file transfer, destroy)
+```
+
+- `Computer()` is a synchronous client. `AsyncComputer()` is the asyncio variant — same surface, every method becomes `await`-able. Pick one and don't mix.
+- `create()` blocks until the sandbox is allocated (typical ~1 s warm-pool for macOS, up to ~45 s if an iOS sim has to boot). Type is `"macos"` by default; pass `type="ios"` for an iOS simulator.
+- Use the sandbox as a context manager — `with Computer().create() as mac:` — so it destroys on exit. The sandbox-side server is reaped after ~2 min of no API touches even without an explicit destroy.
+- Errors surface as `UseComputerError` subclasses (`use_computer.errors`). HTTP layer auto-retries idempotent calls, so a `ConnectError` reaching your code usually means the gateway is genuinely unreachable.
+
+## Setup
+
+```bash
+pip install use-computer
+export USE_COMPUTER_API_KEY=mk_live_…       # from use.computer/r/<reservation-id>
+```
+
+```python
+from use_computer import Computer
+
+with Computer().create() as mac:        # defaults: type="macos"
+    mac.exec_ssh("open -a TextEdit")
+    mac.keyboard.type("hello")
+    png = mac.screenshot.take_full_screen()
+```
+
+`Computer()` reads `USE_COMPUTER_API_KEY` from the env. Pass `api_key=` or `base_url=` explicitly when scripting against dev (`https://api.dev.use.computer`) or a local tunnel.
+
+## When to read which reference
+
+| Situation                                                               | Read                       |
+| ----------------------------------------------------------------------- | -------------------------- |
+| Driving a macOS sandbox (click, type, exec, upload, screenshot)         | `references/macos.md`      |
+| Driving an iOS / iPad / Watch / TV / Vision simulator                   | `references/ios.md`        |
+| Long-running session, slow agent think time, errors, retries, recording | `references/lifecycle.md`  |
+| Running an agent over a dataset (Harbor jobs, this cookbook's recipes)  | `references/cookbook.md`   |
+
+If the user's question spans multiple sections (e.g. "build an iOS agent that runs in Harbor"), load both — they're short.
+
+## Async variant
+
+The async API mirrors the sync API exactly. Use it when the caller is already an asyncio loop (an MCP server, an aiohttp service, etc.):
+
+```python
+import asyncio
+from use_computer import AsyncComputer
+
+async def main():
+    async with AsyncComputer() as cc:
+        async with await cc.create() as mac:
+            await mac.keyboard.type("hello")
+            png = await mac.screenshot.take_full_screen()
+
+asyncio.run(main())
+```
+
+`start_keepalive` is sync-only by design — the heartbeat thread doesn't need an event loop.
+
+## Where to look in source
+
+- SDK source: `sdk/use_computer/` (sync + async DSL). Start with `sandbox.py` and `client.py`.
+- One-shot examples: `sdk/examples/_1_hello_macos.py` … `_5_keepalive.py`.
+- Cookbook recipes: `src/runner/agents/`, `src/runner/environments/use_computer.py`, `src/runner/configs/job-*.yaml`.
+- API reference: <https://docs.use.computer/docs/sdk> and Swagger at <https://api.use.computer/docs>.

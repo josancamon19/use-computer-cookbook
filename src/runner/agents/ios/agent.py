@@ -28,7 +28,7 @@ from harbor.models.agent.context import AgentContext
 from use_computer.sandbox import AsyncIOSSandbox
 from PIL import Image
 
-from runner.agents.base import BaseCUAAgent, _annotate_click, load_prompt, resize_for_vision
+from runner.agents.base import BaseCUAAgent, _annotate_click, load_prompt, scale_screenshot_for_model
 
 litellm.drop_params = True  # Fireworks doesn't accept tool_choice etc; drop instead of erroring
 
@@ -261,7 +261,7 @@ class IOSAgent(BaseCUAAgent):
         self.screen_height = screen_h
         (self.images_dir / "step_000.png").write_bytes(ss)
 
-        ss_api, api_w, api_h, _, _ = resize_for_vision(ss, model)
+        ss_api, api_w, api_h, _, _ = scale_screenshot_for_model(ss, model)
         # axe tap/swipe interpret coords as logical POINTS, not pixels.
         # Override sx/sy to map api-space → points (e.g. iPhone 17 Pro: 402×874).
         info = await sandbox.display.get_info()
@@ -438,7 +438,7 @@ class IOSAgent(BaseCUAAgent):
                     if annotated is not ss_bytes:
                         break
                 (self.images_dir / img_name).write_bytes(annotated)
-                ss_bytes_api, _, _, _, _ = resize_for_vision(ss_bytes, model)
+                ss_bytes_api, _, _, _, _ = scale_screenshot_for_model(ss_bytes, model)
                 messages.append(
                     {
                         "role": "user",
