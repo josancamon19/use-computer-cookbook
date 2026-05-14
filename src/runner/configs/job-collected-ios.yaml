@@ -1,20 +1,12 @@
-# Harbor job config for iOS tasks exported via collected/export.py.
-# Pick the active agent by uncommenting exactly one block.
-#
-#   cd runner
-#   uv run harbor run \
-#     -c src/runner/configs/job-collected-ios.yaml \
-#     -p datasets/collected/ios/<task-name>
-
 jobs_dir: ./jobs
-n_attempts: 1000
+n_attempts: 1
 orchestrator:
     type: local
     n_concurrent_trials: 70
 environment:
     import_path: runner.environments.use_computer:UseComputerEnvironment
     kwargs:
-        gateway_url: http://10.10.10.2:8081
+        gateway_url: https://api.use.computer
         platform: ios
     delete: true
 

@@ -8,7 +8,7 @@ orchestrator:
 environment:
     import_path: "runner.environments.use_computer:UseComputerEnvironment"
     kwargs:
-        gateway_url: "http://10.10.10.2:8080"
+        gateway_url: "https://api.use.computer"
     delete: true
 agents:
     - import_path: "runner.agents.macos.anthropic:AnthropicCUAAgent"

@@ -15,7 +15,7 @@ orchestrator:
 environment:
     import_path: runner.environments.use_computer:UseComputerEnvironment
     kwargs:
-        gateway_url: http://10.10.10.2:8081
+        gateway_url: https://api.use.computer
         platform: ios
     delete: true
 

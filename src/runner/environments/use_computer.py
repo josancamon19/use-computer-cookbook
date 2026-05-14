@@ -55,7 +55,11 @@ class UseComputerEnvironment(BaseEnvironment):
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
-        api_key = api_key or os.environ.get("MMINI_API_KEY", "")
+        api_key = (
+            api_key
+            or os.environ.get("USE_COMPUTER_API_KEY")
+            or os.environ.get("MMINI_API_KEY", "")
+        )
         self._api_key = api_key
         self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
         self._sandbox: AsyncSandbox | None = None

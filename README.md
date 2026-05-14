@@ -8,7 +8,7 @@ For one-purpose SDK snippets (screenshot, recording, file transfer, keepalive), 
 
 ```bash
 uv sync
-cp .env.example .env   # ANTHROPIC_API_KEY + MMINI_API_KEY
+cp .env.example .env   # ANTHROPIC_API_KEY + USE_COMPUTER_API_KEY (mk_live_…)
 
 uv run harbor run -c src/runner/configs/job-macosworld.yaml --env-file .env
 ```
