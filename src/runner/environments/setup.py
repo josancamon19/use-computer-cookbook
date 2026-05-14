@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 # macOSWorld benchmark assets — referenced from pre_commands as "Benchmark_Backup/<name>".
-BENCHMARK_ASSETS_DIR = Path(__file__).resolve().parents[3] / "macosworld" / "files"
+BENCHMARK_ASSETS_DIR = Path(__file__).resolve().parent.parent / "adapters" / "macosworld" / "files"
 BENCHMARK_VM_DIR = "/Users/lume/Benchmark_Backup"
 
 
