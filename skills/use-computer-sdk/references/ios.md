@@ -53,10 +53,10 @@ To enumerate what the reservation's Mac mini actually has installed, the gateway
 
 ## Sending screenshots to a vision model
 
-iOS screenshots are larger than most CUA models accept (an iPhone 17 Pro screenshot is ~1206×2622 logical points and the raw PNG is even bigger). Always pipe them through `scale_screenshot_for_model` and multiply the model's coords by the returned `sx`, `sy` before calling `input.tap`:
+iOS screenshots are larger than most CUA models accept (an iPhone 17 Pro screenshot is ~1206×2622 logical points and the raw PNG is even bigger). Always pipe them through `scale_screenshot_for_model` (in `runner.agents.base`) and multiply the model's coords by the returned `sx`, `sy` before calling `input.tap`:
 
 ```python
-from use_computer import scale_screenshot_for_model
+from runner.agents.base import scale_screenshot_for_model
 
 png = ios.screenshot.take_full_screen()
 api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, "anthropic/claude-sonnet-4-6")

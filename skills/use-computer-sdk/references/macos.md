@@ -88,10 +88,10 @@ mac.mouse.click(center_x, center_y)
 
 ### Sending screenshots to a vision model
 
-If you're feeding the screenshot to a CUA model (Claude, OpenAI, Gemini, Kimi/Fireworks, …), the model returns coordinates in *its own resized-image space*, not your native screenshot. The SDK ships `use_computer.scale_screenshot_for_model(...)` to do the resize client-side and hand you the inverse scale factors:
+If you're feeding the screenshot to a CUA model (Claude, OpenAI, Gemini, Kimi/Fireworks, …), the model returns coordinates in *its own resized-image space*, not your native screenshot. The cookbook ships `runner.agents.base.scale_screenshot_for_model(...)` to do the resize client-side and hand you the inverse scale factors:
 
 ```python
-from use_computer import scale_screenshot_for_model
+from runner.agents.base import scale_screenshot_for_model
 
 png = mac.screenshot.take_full_screen()
 api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, "anthropic/claude-sonnet-4-6")
@@ -99,7 +99,7 @@ api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, "anthropic/cla
 mac.mouse.click(int(x * sx), int(y * sy))
 ```
 
-Per-model caps live in `screenshot_cap_for_model(model)` — change there, not at call sites. See `cookbook.md` for the full rationale.
+The per-model registry lives in `screenshot_cap_for_model(model)` (also in `runner.agents.base`) — change there, not at call sites. See `cookbook.md` for the full rationale. If you're consuming the SDK *outside* this cookbook, you can copy these two helpers (~40 lines) into your own project; they don't depend on anything in `runner.agents`.
 
 ## Common patterns
 

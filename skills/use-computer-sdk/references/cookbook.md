@@ -45,9 +45,9 @@ uv run harbor run -c src/runner/configs/job-adhoc.yaml -p datasets/adhoc/macos -
 
 All five inherit from `runner.agents.base` (shared screenshot prep, coord scaling, action dispatch). Switching providers is a 1-line YAML change.
 
-## Coordinate scaling — `use_computer.vision`
+## Coordinate scaling — `runner.agents.base`
 
-The SDK ships two helpers (`use_computer/vision.py`, re-exported at package root) that every agent uses before sending a screenshot to a vision model. They live in the SDK rather than the cookbook so any consumer — not just the cookbook's agents — gets correct coordinates out of the box:
+`src/runner/agents/base.py` exposes two helpers every cookbook agent uses before sending a screenshot to a vision model. They live in the cookbook, not the SDK, because the per-model cap table is a registry that grows as new families ship — adding a model shouldn't require an SDK release.
 
 - `screenshot_cap_for_model(model)` — looks up the per-family long-edge cap (Claude Opus 4.7+ → 2576 px, other Claude → 1568, Kimi/Fireworks → 896, OpenAI/Gemini fallback → 1280).
 - `scale_screenshot_for_model(image_bytes, model) → (bytes, api_w, api_h, sx, sy)` — aspect-preserving resize to that cap, returning the scale factors that map _model coords → native display points_.
@@ -61,7 +61,7 @@ Why we do this client-side:
 Pattern used in every agent:
 
 ```python
-from use_computer import scale_screenshot_for_model
+from runner.agents.base import scale_screenshot_for_model
 
 png = mac.screenshot.take_full_screen()
 api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, model_name)
@@ -70,7 +70,7 @@ api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, model_name)
 mac.mouse.click(int(x * sx), int(y * sy))
 ```
 
-If you're writing a custom agent (in this cookbook or elsewhere), **use these helpers instead of doing your own resize**. Tweaks to per-model caps belong in `screenshot_cap_for_model()`, not scattered across agent files.
+If you're writing a custom agent (in this cookbook or elsewhere), **use these helpers instead of doing your own resize**. Tweaks to per-model caps belong in `screenshot_cap_for_model()`, not scattered across agent files. If you're consuming the SDK outside this cookbook, the implementation is ~40 lines of Pillow — copy it over (and the per-model registry) into your project.
 
 ## What `UseComputerEnvironment` does
 

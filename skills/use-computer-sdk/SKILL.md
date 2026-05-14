@@ -40,6 +40,35 @@ with Computer().create() as mac:        # defaults: type="macos"
 
 `Computer()` reads `USE_COMPUTER_API_KEY` from the env. Pass `api_key=` or `base_url=` explicitly when scripting against dev (`https://api.dev.use.computer`) or a local tunnel.
 
+## Vision-model coordinate caps (read this before clicking)
+
+Every CUA-style model returns click coordinates **in resized-image space**, not the original screenshot's pixel space. If you feed a 3200×2000 retina screenshot straight to a model that resizes to 1568 px long-edge internally, the model returns `[x, y]` relative to 1568×980 — and `mac.mouse.click(x, y)` takes native display points, so your clicks land at half the intended position. The model's resize is silent and only loosely documented, which is why we cap on the client.
+
+Known per-family long-edge caps:
+
+| Model                                    | Cap (px) | Notes                                                                 |
+| ---------------------------------------- | -------- | --------------------------------------------------------------------- |
+| Claude Opus 4.7+, 4.8+, 5                | 2576     | Anthropic's larger cap on newer Opus models                           |
+| Other Claude (Sonnet, Haiku, older Opus) | 1568     | Standard Anthropic CUA cap                                            |
+| Kimi K2.5 / Fireworks                    | 896      | y-coord accuracy degrades >1024 px on tall iOS shots (probed)         |
+| OpenAI computer-use-preview, Gemini      | 1280     | Fallback for everyone else                                            |
+
+**If you're building agent code in this cookbook**, use the helper instead of duplicating the registry:
+
+```python
+from runner.agents.base import scale_screenshot_for_model
+
+png = mac.screenshot.take_full_screen()
+api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, model_name)
+# send api_bytes to the model (api_w × api_h)
+# when the model returns coordinate=[x, y]:
+mac.mouse.click(int(x * sx), int(y * sy))   # or ios.input.tap(int(x * sx), int(y * sy))
+```
+
+The helper does an aspect-preserving Pillow resize and returns `sx`, `sy` to multiply model coords back into native space. See `references/cookbook.md` for the rationale and how to extend it for a new model.
+
+**If you're the agent reading this skill to drive a sandbox directly** (not writing agent code, just acting on a screenshot you've been handed): the same rule applies to you. Before reasoning about pixel positions in a screenshot, check whether the image you received was already resized to the cap above. If it wasn't, you're looking at a higher-resolution image than the coordinates you produce will refer to — divide by the scale or ask the harness for a pre-scaled version. When in doubt, use the helper above and trust the `sx`, `sy` it returns.
+
 ## When to read which reference
 
 | Situation                                                               | Read                       |
