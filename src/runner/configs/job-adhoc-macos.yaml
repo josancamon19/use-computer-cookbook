@@ -1,12 +1,3 @@
-# Harbor job config for macOS adhoc tasks (datasets/adhoc/macos/).
-# Adhoc tasks have no recorded actions and (usually) no verifier — the run
-# is for visual / VNC inspection. Sonnet 4.6 is the default agent.
-#
-#   cd runner
-#   uv run harbor run \
-#     -c src/runner/configs/job-adhoc-macos.yaml \
-#     -p datasets/adhoc/macos
-
 jobs_dir: ./jobs
 n_attempts: 1
 orchestrator:

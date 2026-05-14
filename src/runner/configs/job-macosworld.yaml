@@ -11,15 +11,16 @@ environment:
         gateway_url: "https://api.use.computer"
     delete: true
 agents:
+    - import_path: "runner.agents.debug:DebugCUAAgent"
+      model_name: "debug"
+      kwargs:
+          max_steps: 1
+          realistic: true
+
     - import_path: "runner.agents.macos.anthropic:AnthropicCUAAgent"
       model_name: "anthropic/claude-sonnet-4-6"
       kwargs:
           max_steps: 50
-    # - import_path: "runner.agents.debug:DebugCUAAgent"
-    #   model_name: "debug"
-    #   kwargs:
-    #       max_steps: 1
-    #       realistic: true
 
     # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
     #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
@@ -27,6 +28,7 @@ agents:
     #       max_steps: 20
     #       max_tokens: 4096
     #       api_base: "https://api.fireworks.ai/inference/v1"
+
     # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
     #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
     #   kwargs:
@@ -34,11 +36,5 @@ agents:
     #       max_tokens: 4096
     #       api_base: "https://api.fireworks.ai/inference/v1"
 
-    # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
-    #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
-    #   kwargs:
-    #       max_steps: 50
-    #       max_tokens: 4096
-    #       api_base: "https://api.fireworks.ai/inference/v1"
 datasets:
     - path: datasets/macosworld_ready
