@@ -53,7 +53,7 @@ Known per-family long-edge caps:
 | Kimi K2.5 / Fireworks                    | 896      | y-coord accuracy degrades >1024 px on tall iOS shots (probed)         |
 | OpenAI computer-use-preview, Gemini      | 1280     | Fallback for everyone else                                            |
 
-**If you're building agent code in this cookbook**, use the helper instead of duplicating the registry:
+**If you're building agent code**, use the helper instead of duplicating the registry:
 
 ```python
 from runner.agents.base import scale_screenshot_for_model
