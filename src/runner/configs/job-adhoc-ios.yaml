@@ -1,11 +1,11 @@
-# Harbor job config for macOS adhoc tasks (datasets/adhoc/macos/).
+# Harbor job config for iOS adhoc tasks (datasets/adhoc/ios/).
 # Adhoc tasks have no recorded actions and (usually) no verifier — the run
 # is for visual / VNC inspection. Sonnet 4.6 is the default agent.
 #
 #   cd runner
 #   uv run harbor run \
-#     -c src/runner/configs/job-adhoc-macos.yaml \
-#     -p datasets/adhoc/macos
+#     -c src/runner/configs/job-adhoc-ios.yaml \
+#     -p datasets/adhoc/ios
 
 jobs_dir: ./jobs
 n_attempts: 1
@@ -16,11 +16,11 @@ environment:
     import_path: runner.environments.use_computer:UseComputerEnvironment
     kwargs:
         gateway_url: http://10.10.10.2:8081
-        platform: macos
+        platform: ios
     delete: true
 
 agents:
-    - import_path: runner.agents.macos.anthropic:AnthropicCUAAgent
+    - import_path: runner.agents.ios.agent:IOSAgent
       model_name: anthropic/claude-sonnet-4-6
       kwargs:
           max_steps: 50

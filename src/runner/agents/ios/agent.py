@@ -28,7 +28,7 @@ from harbor.models.agent.context import AgentContext
 from mmini.sandbox import AsyncIOSSandbox
 from PIL import Image
 
-from runner.agents.base_cua import BaseCUAAgent, _annotate_click, load_prompt, resize_for_vision
+from runner.agents.base import BaseCUAAgent, _annotate_click, load_prompt, resize_for_vision
 
 litellm.drop_params = True  # Fireworks doesn't accept tool_choice etc; drop instead of erroring
 

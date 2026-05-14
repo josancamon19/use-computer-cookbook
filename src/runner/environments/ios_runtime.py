@@ -1,4 +1,4 @@
-"""iOS-side helpers for MminiEnvironment: device pin, local exec for the verifier."""
+"""iOS-side helpers for UseComputerEnvironment: device pin, local exec for the verifier."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from harbor.environments.base import ExecResult
 
 if TYPE_CHECKING:
-    from runner.environments.mmini import MminiEnvironment
+    from runner.environments.use_computer import UseComputerEnvironment
 
 
 def expand_ios_id(short: str, kind: str) -> str:
@@ -35,7 +35,7 @@ def read_ios_pin(task_dir: Path) -> tuple[str, str]:
 
 
 async def exec_local(
-    env: MminiEnvironment,
+    env: UseComputerEnvironment,
     command: str,
     extra_env: dict[str, str] | None,
     timeout_sec: int | None,

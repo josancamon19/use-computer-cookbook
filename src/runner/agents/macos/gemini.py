@@ -19,7 +19,7 @@ from google.genai.types import Content, FunctionResponse, FunctionResponseBlob, 
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-from runner.agents.base_cua import (
+from runner.agents.base import (
     BaseCUAAgent,
     execute_action,
     load_prompt,

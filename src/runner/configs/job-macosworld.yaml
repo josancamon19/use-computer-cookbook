@@ -1,0 +1,44 @@
+# Curated subset of 13 macosworld tasks kept after pruning the
+# 2026-05-01__17-06-07 run (full backup at jobs/2026-05-01__17-06-07__before-prune).
+jobs_dir: jobs
+n_attempts: 1
+orchestrator:
+    type: local
+    n_concurrent_trials: 16
+environment:
+    import_path: "runner.environments.use_computer:UseComputerEnvironment"
+    kwargs:
+        gateway_url: "http://10.10.10.2:8080"
+    delete: true
+agents:
+    - import_path: "runner.agents.macos.anthropic:AnthropicCUAAgent"
+      model_name: "anthropic/claude-sonnet-4-6"
+      kwargs:
+          max_steps: 50
+    # - import_path: "runner.agents.debug:DebugCUAAgent"
+    #   model_name: "debug"
+    #   kwargs:
+    #       max_steps: 1
+    #       realistic: true
+
+    # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
+    # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
+    #   kwargs:
+    #       max_steps: 20
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
+
+    # - import_path: "runner.agents.macos.generic:GenericCUAAgent"
+    #   model_name: "openai/accounts/fireworks/models/qwen3p6-plus"
+    #   kwargs:
+    #       max_steps: 50
+    #       max_tokens: 4096
+    #       api_base: "https://api.fireworks.ai/inference/v1"
+datasets:
+    - path: datasets/macosworld_ready

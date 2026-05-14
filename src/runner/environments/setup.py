@@ -14,7 +14,7 @@ from mmini.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, t
 from runner.environments.macos_runtime import remap_str, wrap_with_timeout
 
 if TYPE_CHECKING:
-    from runner.environments.mmini import MminiEnvironment
+    from runner.environments.use_computer import UseComputerEnvironment
 
 
 # macOSWorld benchmark assets — referenced from pre_commands as "Benchmark_Backup/<name>".
@@ -22,7 +22,7 @@ BENCHMARK_ASSETS_DIR = Path(__file__).resolve().parents[3] / "macosworld" / "fil
 BENCHMARK_VM_DIR = "/Users/lume/Benchmark_Backup"
 
 
-async def run_macos_setup(env: MminiEnvironment) -> None:
+async def run_macos_setup(env: UseComputerEnvironment) -> None:
     """Upload test.sh, run pre_command.sh line-by-line, load in_process config."""
     setup_dir = env._task_dir / "tests" / "setup"
 
@@ -53,7 +53,7 @@ async def run_macos_setup(env: MminiEnvironment) -> None:
     env.logger.info("task setup complete")
 
 
-async def _upload_collected_files(env: MminiEnvironment, setup_dir: Path) -> None:
+async def _upload_collected_files(env: UseComputerEnvironment, setup_dir: Path) -> None:
     """Upload files persisted at collect time. Manifest at setup/files/manifest.json
     maps {remote_path, local_name} pairs."""
     manifest_path = setup_dir / "files" / "manifest.json"
@@ -77,7 +77,7 @@ async def _upload_collected_files(env: MminiEnvironment, setup_dir: Path) -> Non
         await env.upload_file(local_path, remote)
 
 
-async def _run_pre_command(env: MminiEnvironment, raw: str) -> None:
+async def _run_pre_command(env: UseComputerEnvironment, raw: str) -> None:
     await _upload_benchmark_files(env, raw)
     lines = [
         ln.strip()
@@ -117,7 +117,7 @@ async def _run_pre_command(env: MminiEnvironment, raw: str) -> None:
 
 
 async def _exec_pre_line(
-    env: MminiEnvironment, raw: str, transpiled: str, n_replacements: int
+    env: UseComputerEnvironment, raw: str, transpiled: str, n_replacements: int
 ) -> ExecResult:
     if n_replacements > 0:
         if needs_exec_ax(transpiled):
@@ -126,7 +126,7 @@ async def _exec_pre_line(
     return await env.exec(raw, timeout_sec=PRE_COMMAND_OSASCRIPT_TIMEOUT_S + 10)
 
 
-async def _upload_benchmark_files(env: MminiEnvironment, pre_command_text: str) -> None:
+async def _upload_benchmark_files(env: UseComputerEnvironment, pre_command_text: str) -> None:
     """Find Benchmark_Backup/<name> refs in the script and upload each one."""
     refs: set[str] = set()
     for m in re.finditer(r'"[^"]*Benchmark_Backup/([^"]+)"', pre_command_text):
@@ -156,7 +156,7 @@ async def _upload_benchmark_files(env: MminiEnvironment, pre_command_text: str) 
     env.logger.info(f"Benchmark_Backup contents:\n{result.stdout}")
 
 
-async def exec_ax(env: MminiEnvironment, command: str, timeout_sec: int = 30) -> ExecResult:
+async def exec_ax(env: UseComputerEnvironment, command: str, timeout_sec: int = 30) -> ExecResult:
     """Run via cua-server's run_command — for commands that need TCC Accessibility."""
     full_cmd = wrap_with_timeout(remap_str(command), timeout_sec)
     result = await env.macos_sandbox.exec_ax(full_cmd, timeout=timeout_sec)

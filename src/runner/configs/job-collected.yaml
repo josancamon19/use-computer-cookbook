@@ -12,7 +12,7 @@ orchestrator:
     type: local
     n_concurrent_trials: 2
 environment:
-    import_path: runner.environments.mmini:MminiEnvironment
+    import_path: runner.environments.use_computer:UseComputerEnvironment
     kwargs:
         gateway_url: http://10.10.10.2:8081
         platform: macos
@@ -20,7 +20,7 @@ environment:
 
 agents:
     # Replay collected actions — no LLM, walks <task>/actions.json
-    - import_path: runner.agents.debug_cua:DebugCUAAgent
+    - import_path: runner.agents.debug:DebugCUAAgent
       model_name: debug
       kwargs:
           replay: true
@@ -31,13 +31,13 @@ agents:
     # ------------------------------------------------------------------
 
     # Anthropic Claude Sonnet 4.6
-    # - import_path: runner.agents.ios:IOSAgent
+    # - import_path: runner.agents.ios.agent:IOSAgent
     #   model_name: anthropic/claude-sonnet-4-6
     #   kwargs:
     #       max_steps: 30
 
     # Smoke-test infra — bangs on every endpoint deterministically
-    # - import_path: runner.agents.debug_cua:DebugCUAAgent
+    # - import_path: runner.agents.debug:DebugCUAAgent
     #   model_name: debug
     #   kwargs:
     #     realistic: true

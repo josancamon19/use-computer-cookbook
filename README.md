@@ -1,72 +1,112 @@
-# use-computer examples
+# use-computer-cookbook
 
-Runnable examples for use.computer: macOS tasks, iOS simulator tasks, replay/debug agents, and Harbor job configs.
+Reference recipes for running computer-use agents on [use.computer](https://use.computer): macOS and iOS sandboxes, Anthropic / OpenAI / Gemini agents, and three adapters that turn external task sources into the [Harbor](https://harborframework.com) task format.
+
+> Looking for one-purpose SDK snippets (screenshot, recording, file transfer, keepalive)? Those live in [use-computer-python/examples/](https://github.com/josancamon19/use-computer-python/tree/main/examples). This repo is for full agent loops and evals.
 
 ## Setup
 
-Install deps with `uv sync`.
-
-Environment variables:
-
-- `ANTHROPIC_API_KEY`: required for Anthropic agents.
-- `MMINI_API_KEY`: use `mk_live_...` for `https://api.use.computer`, or the master key for admin/dev gateway configs.
-
-Point customer configs at `https://api.use.computer`. Point internal/dev configs at the relevant admin/dev gateway.
-
-## Run
-
 ```bash
-uv run harbor run -c src/runner/configs/job.yaml --env-file .env
+uv sync
+cp .env.example .env   # fill in ANTHROPIC_API_KEY and MMINI_API_KEY
 ```
 
-Use a different config for iOS or collected tasks:
+- `ANTHROPIC_API_KEY` — for the macOS / iOS Anthropic CUA agents.
+- `MMINI_API_KEY` — either a customer `mk_live_…` (for `https://api.use.computer`) or the gateway admin key (for the internal `10.10.10.2:808x` configs).
+
+## Run a job
 
 ```bash
-uv run harbor run -c src/runner/configs/job-collected-ios.yaml --env-file .env
+uv run harbor run -c src/runner/configs/job-macosworld.yaml --env-file .env
 ```
 
-Harbor run jobs docs: https://harborframework.com/docs/run-jobs/run-evals
+Each config wires together a dataset, an environment (the use.computer gateway), and exactly one agent. Pick one:
 
-## Configs
+| Config | Dataset | Default agent |
+| --- | --- | --- |
+| `job-macosworld.yaml` | curated [macOSWorld](https://github.com/microsoft/MacOSWorld) tasks | Claude Sonnet 4.6 (macOS) |
+| `job-adhoc-macos.yaml` | hand-written macOS prompts (`datasets/adhoc/macos`) | Claude Sonnet 4.6 (macOS) |
+| `job-adhoc-ios.yaml` | hand-written iOS prompts (`datasets/adhoc/ios`) | Claude Sonnet 4.6 (iOS) |
+| `job-collected.yaml` | macOS tasks recorded via the `/collect` UI | Debug replay |
+| `job-collected-ios.yaml` | iOS tasks recorded via the `/collect-ios` UI | Debug replay |
 
-- `src/runner/configs/job.yaml`: curated macOSWorld set.
-- `src/runner/configs/job-adhoc-macos.yaml`: free-form macOS prompts from `datasets/adhoc/macos`.
-- `src/runner/configs/job-collected.yaml`: collected macOS tasks, defaulting to replay/debug.
-- `src/runner/configs/job-collected-ios.yaml`: collected iOS simulator tasks.
+Full Harbor CLI docs: <https://harborframework.com/docs/run-jobs/run-evals>
 
-Each config sets the task dataset, gateway URL, platform, concurrency, cleanup behavior, and active agent.
+## Adapters — making datasets
 
-Harbor run jobs docs: https://harborframework.com/docs/run-jobs/run-evals
+All three live under [`src/runner/adapters/`](src/runner/adapters/) and write Harbor task dirs to `datasets/<source>/<platform>/`.
 
-## Task Sources
-
-- `adhoc/`: hand-written prompt lists. `adhoc/export.py` turns `adhoc/tasks/*.json` into Harbor task directories under `datasets/adhoc/<platform>`.
-- `collected/`: tasks recorded in the use.computer collection UI (`/collect` and `/collect-ios`) and stored by the gateway. `collected/export.py` pulls them from `/admin/tasks` and writes Harbor tasks under `datasets/collected/<platform>`, including replay actions and verifier/setup files when present.
-- `datasets/macosworld_ready`: curated macOSWorld tasks already converted into Harbor format.
+- **`adhoc/`** — hand-written prompt lists in `tasks/{ios,macos}.json`.
+  ```bash
+  uv run python -m runner.adapters.adhoc.export src/runner/adapters/adhoc/tasks/macos.json
+  ```
+- **`collected/`** — tasks recorded with the use.computer `/collect` / `/collect-ios` UI on the gateway. Pulls from `/admin/tasks`, bundles each task's recorded actions into `actions.json` for replay.
+  ```bash
+  uv run python -m runner.adapters.collected.adapter --all --platform macos
+  ```
+- **`macosworld/`** — the [macOSWorld](https://github.com/microsoft/MacOSWorld) benchmark. Needs a local clone of the upstream repo passed in via `--macosworld-root`.
+  ```bash
+  uv run python -m runner.adapters.macosworld.run_adapter \
+    --macosworld-root <path-to-macosworld-clone> \
+    --task-dir datasets/macosworld_ready --ready-only
+  ```
 
 ## Agents
 
-- `AnthropicCUAAgent`: Claude computer-use agent for macOS screenshots, mouse, keyboard, and shell-backed tasks.
-- `IOSAgent`: Claude-driven iOS simulator agent using tap, swipe, app, appearance, and screenshot tools.
-- `DebugCUAAgent` with `replay: true`: replays collected `actions.json` without an LLM.
-- `DebugCUAAgent` with `realistic: true`: deterministic endpoint smoke test for infra.
-- `GenericCUAAgent`: OpenAI-compatible chat/completions agent for Fireworks or other OpenAI-style model endpoints.
+In [`src/runner/agents/`](src/runner/agents/), split by target platform plus a couple of shared helpers.
 
-## Task Shape
+**macOS** ([`agents/macos/`](src/runner/agents/macos/)):
 
-Each task directory is normal Harbor task format.
+- `anthropic.py` → `AnthropicCUAAgent` — Claude's computer-use tool with mouse + keyboard + screenshot.
+- `openai.py` → `OpenAICUAAgent` — OpenAI computer-use preview.
+- `gemini.py` → `GeminiCUAAgent` — Gemini's computer-use tool.
+- `generic.py` → `GenericCUAAgent` — any OpenAI-compatible chat/completions endpoint (e.g. Fireworks).
 
-Harbor task format docs: https://harborframework.com/docs/tasks
+**iOS** ([`agents/ios/`](src/runner/agents/ios/)):
+
+- `agent.py` → `IOSAgent` — Claude-driven iOS simulator agent using tap, swipe, app launch, environment, and screenshot tools.
+
+**Shared** ([`agents/`](src/runner/agents/)):
+
+- `base.py` → `BaseCUAAgent` — the tool-loop scaffolding every CUA agent inherits.
+- `debug.py` → `DebugCUAAgent` — replays a task's recorded `actions.json` with no LLM. Use this against the `collected/` datasets.
+- `prompts/` — system prompt templates loaded by `base.load_prompt(...)`.
+
+## Task shape
+
+Every adapter writes Harbor's standard layout:
 
 ```text
-instruction.md
-task.toml
-tests/test.sh
-tests/setup/pre_command.sh
-actions.json          # optional replay steps
-expected_final.json   # optional visual/reference state
+<task-name>/
+├── instruction.md
+├── task.toml
+├── tests/
+│   ├── test.sh
+│   └── setup/
+│       ├── pre_command.sh
+│       └── files/                # optional, populated by collected/
+├── actions.json                  # optional — debug-agent replay
+└── expected_final.json           # optional — reference state
 ```
 
-Docs: https://api.use.computer/docs
+Harbor docs: <https://harborframework.com/docs/tasks>
 
-Python SDK: https://github.com/josancamon19/use-computer-python
+## Layout
+
+```
+runner/
+├── src/runner/
+│   ├── adapters/      ← see adapters/README.md
+│   ├── agents/        ← macos/, ios/, shared base + debug
+│   ├── configs/       ← Harbor job YAMLs
+│   ├── environments/  ← UseComputerEnvironment (the Harbor↔gateway bridge)
+│   └── server/        ← internal HTTP sidecar; ignore unless deploying it
+├── datasets/          ← generated Harbor task dirs (gitignored)
+└── jobs/              ← generated run outputs (gitignored)
+```
+
+## Links
+
+- API docs (Swagger): <https://api.use.computer/docs>
+- Python SDK: <https://github.com/josancamon19/use-computer-python>
+- Docs site: <https://docs.use.computer>

@@ -19,7 +19,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from mmini.sandbox import AsyncIOSSandbox
 
-from runner.agents.base_cua import BaseCUAAgent
+from runner.agents.base import BaseCUAAgent
 
 # Realistic-mode tunables. Fixed values — deterministic runs so two back-to-back
 # trials of the same task emit the identical HTTP sequence, and concurrency

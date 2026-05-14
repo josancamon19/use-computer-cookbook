@@ -11,7 +11,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from PIL import Image
 
-from runner.agents.base_cua import (
+from runner.agents.base import (
     BaseCUAAgent,
     build_system_prompt,
     execute_action,

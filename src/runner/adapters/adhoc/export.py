@@ -7,10 +7,9 @@ import shutil
 import sys
 from pathlib import Path
 
-RUNNER_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(RUNNER_DIR))
-from server import write_task_dir  # noqa: E402
+from runner.server.task_dir import write_task_dir
 
+RUNNER_DIR = Path(__file__).resolve().parents[4]
 ADHOC_BASE = RUNNER_DIR / "datasets" / "adhoc"
 DEFAULT_JSON = Path(__file__).resolve().parent / "tasks" / "ios.json"
 DEFAULT_PLATFORM = "ios"

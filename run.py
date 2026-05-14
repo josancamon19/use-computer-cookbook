@@ -396,7 +396,7 @@ async def run_generic(
     print(f"  Tokens: in={total_in} out={total_out}")
 
 
-# ── pyautogui parser (ported from runner.agents.generic_cua) ─────────────────
+# ── pyautogui parser (ported from runner.agents.macos.generic) ───────────────
 
 _MODIFIER_KEYS = {"ctrl", "control", "alt", "option", "shift", "cmd", "command", "win", "super", "meta"}
 

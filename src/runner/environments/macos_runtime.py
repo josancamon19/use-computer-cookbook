@@ -1,4 +1,4 @@
-"""macOS-side helpers for MminiEnvironment: exec routing, path remap, transfer."""
+"""macOS-side helpers for UseComputerEnvironment: exec routing, path remap, transfer."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from harbor.environments.base import ExecResult
 
 if TYPE_CHECKING:
-    from runner.environments.mmini import MminiEnvironment
+    from runner.environments.use_computer import UseComputerEnvironment
 
 
 # macOS SIP blocks writes under /. Harbor's expected paths get remapped to
@@ -50,7 +50,7 @@ def wrap_with_timeout(cmd: str, timeout: int) -> str:
 
 
 async def exec_on_vm(
-    env: MminiEnvironment,
+    env: UseComputerEnvironment,
     command: str,
     cwd: str | None,
     extra_env: dict[str, str] | None,
@@ -97,7 +97,7 @@ async def exec_on_vm(
 
 
 async def _diagnose_alarm_kill(
-    env: MminiEnvironment, full_cmd: str, elapsed: float, timeout: int
+    env: UseComputerEnvironment, full_cmd: str, elapsed: float, timeout: int
 ) -> None:
     """Best-effort triage when our perl-alarm wrapper kills a verifier mid-run."""
     env.logger.warning(
@@ -143,7 +143,7 @@ async def _diagnose_alarm_kill(
         env.logger.debug(f"alarm-killed process list failed: {exc}")
 
 
-async def fire_in_process(env: MminiEnvironment, step: int) -> None:
+async def fire_in_process(env: UseComputerEnvironment, step: int) -> None:
     """Pop the per-task in_process dialog if the current step matches."""
     if env._in_process_cmd and step == env._in_process_step:
         env.logger.info(f"in_process: firing dialog at step {step}")
@@ -154,17 +154,17 @@ async def fire_in_process(env: MminiEnvironment, step: int) -> None:
 
 # --- transfer helpers ---
 
-async def upload_file(env: MminiEnvironment, source: Path | str, target: str) -> None:
+async def upload_file(env: UseComputerEnvironment, source: Path | str, target: str) -> None:
     await env.macos_sandbox.upload(str(source), remap(target))
 
 
-async def upload_dir(env: MminiEnvironment, source: Path | str, target: str) -> None:
+async def upload_dir(env: UseComputerEnvironment, source: Path | str, target: str) -> None:
     await env.macos_sandbox.upload_dir(str(source), remap(target))
 
 
-async def download_file(env: MminiEnvironment, source: str, target: Path | str) -> None:
+async def download_file(env: UseComputerEnvironment, source: str, target: Path | str) -> None:
     await env.macos_sandbox.download_file(remap(source), str(target))
 
 
-async def download_dir(env: MminiEnvironment, source: str, target: Path | str) -> None:
+async def download_dir(env: UseComputerEnvironment, source: str, target: Path | str) -> None:
     await env.macos_sandbox.download_dir(remap(source), str(target))

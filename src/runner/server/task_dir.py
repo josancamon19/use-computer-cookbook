@@ -21,13 +21,13 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
     (task_dir / "instruction.md").write_text(task.get("instruction", ""))
     # No [environment] block — mmini sandbox sizes (cpus/memory) are fixed by
     # the warm-pool config on the gateway side; setting them here is ignored
-    # at best and conflicts with MminiEnvironment._validate_definition.
+    # at best and conflicts with UseComputerEnvironment._validate_definition.
     toml_lines = [
         "[verifier]\ntimeout_sec = 90\n",
         "[agent]\ntimeout_sec = 900\n",
     ]
     # Pin the simulator the task was collected with so replay coords match.
-    # MminiEnvironment.start() reads this back, re-expands the prefix, and
+    # UseComputerEnvironment.start() reads this back, re-expands the prefix, and
     # passes the full id to client.create(type=ios). We store the short form
     # ("iPhone-17-Pro" / "iOS-26-4") so the toml is readable; the long
     # "com.apple.CoreSimulator.*" prefix is reconstructed at runtime.
@@ -107,7 +107,7 @@ def write_job_yaml(
         "n_attempts": 1,
         "orchestrator": {"type": "local", "n_concurrent_trials": 1},
         "environment": {
-            "import_path": "runner.environments.mmini:MminiEnvironment",
+            "import_path": "runner.environments.use_computer:UseComputerEnvironment",
             "kwargs": {"gateway_url": gateway_url, "platform": platform},
             "delete": True,
         },

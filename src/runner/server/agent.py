@@ -8,7 +8,7 @@ def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> 
     # task.toml and walks each step via the SDK; no LLM call.
     if model == "replay":
         return {
-            "import_path": "runner.agents.debug_cua:DebugCUAAgent",
+            "import_path": "runner.agents.debug:DebugCUAAgent",
             "model_name": "debug",
             "kwargs": {"max_steps": max_steps, "replay": True},
         }
@@ -16,13 +16,13 @@ def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> 
         # iOS uses a custom tool schema (tap/swipe/button/...) so generic and
         # macOS-shaped agents don't apply. Only Anthropic for now.
         return {
-            "import_path": "runner.agents.ios:IOSAgent",
+            "import_path": "runner.agents.ios.agent:IOSAgent",
             "model_name": model if "/" in model else f"anthropic/{model}",
             "kwargs": {"max_steps": max_steps},
         }
     if "kimi" in model or "moonshot" in model or model.startswith("openai/"):
         return {
-            "import_path": "runner.agents.generic_cua:GenericCUAAgent",
+            "import_path": "runner.agents.macos.generic:GenericCUAAgent",
             "model_name": model if "/" in model else f"openai/{model}",
             "kwargs": {
                 "max_steps": max_steps,
@@ -31,7 +31,7 @@ def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> 
             },
         }
     return {
-        "import_path": "runner.agents.anthropic_cua:AnthropicCUAAgent",
+        "import_path": "runner.agents.macos.anthropic:AnthropicCUAAgent",
         "model_name": model if "/" in model else f"anthropic/{model}",
         "kwargs": {"max_steps": max_steps},
     }

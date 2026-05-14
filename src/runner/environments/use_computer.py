@@ -30,7 +30,7 @@ def _timer():
     yield _T()
 
 
-class MminiEnvironment(BaseEnvironment):
+class UseComputerEnvironment(BaseEnvironment):
     """Runs harbor tasks on a mmini sandbox: macOS VMs or iOS simulators."""
 
     def __init__(
