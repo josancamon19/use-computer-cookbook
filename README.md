@@ -13,11 +13,10 @@ cp .env.example .env   # ANTHROPIC_API_KEY + USE_COMPUTER_API_KEY (mk_live_…)
 uv run harbor run -c src/runner/configs/job-macosworld.yaml --env-file .env
 ```
 
-| Config                 | Dataset                                               | Default agent             |
-| ---------------------- | ----------------------------------------------------- | ------------------------- |
-| `job-macosworld.yaml`  | [macOSWorld](https://github.com/microsoft/MacOSWorld) | Claude Sonnet 4.6 (macOS) |
-| `job-adhoc-macos.yaml` | hand-written macOS prompts                            | Claude Sonnet 4.6 (macOS) |
-| `job-adhoc-ios.yaml`   | hand-written iOS prompts                              | Claude Sonnet 4.6 (iOS)   |
+| Config                | Dataset                                     | Default agent                                                                  |
+| --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
+| `job-macosworld.yaml` | [macOSWorld](https://macos-world.github.io) | Claude Sonnet 4.6 + Kimi K2.5 + Qwen 3.6                                       |
+| `job-adhoc.yaml`      | hand-written prompts (macOS or iOS)         | Claude Sonnet 4.6 — flip `platform:` and the agent `import_path` for iOS       |
 
 ## Layout
 
