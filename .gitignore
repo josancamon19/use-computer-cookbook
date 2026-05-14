@@ -10,3 +10,7 @@ src/runner/adapters/macosworld/tasks/
 .DS_Store
 .vincent
 *.mp4
+# iOS verifier stray-output safety net — test_ios.sh writes these to CWD if
+# HARBOR_REWARD_FILE / HARBOR_GRADER_LOG are unset.
+grader.log
+reward.txt
