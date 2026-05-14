@@ -2,16 +2,18 @@ jobs_dir: ./jobs
 n_attempts: 1
 orchestrator:
     type: local
-    n_concurrent_trials: 3
+    n_concurrent_trials: 2 # rented mac minis * 2
 environment:
     import_path: runner.environments.use_computer:UseComputerEnvironment
     kwargs:
         gateway_url: https://api.use.computer
-        platform: ios
+        platform: macos
+        # platform: ios
     delete: true
 
 agents:
-    - import_path: runner.agents.ios.agent:IOSAgent
+    - import_path: runner.agents.macos.anthropic:AnthropicCUAAgent
+      # - import_path: runner.agents.ios.agent:IOSAgent
       model_name: anthropic/claude-sonnet-4-6
       kwargs:
           max_steps: 50
