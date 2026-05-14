@@ -29,6 +29,10 @@ src/runner/
 └── server/        internal HTTP sidecar; ignore unless deploying it
 ```
 
+## Skill for AI coding assistants
+
+[`skills/SKILL.md`](skills/SKILL.md) is a Claude-Code-ready skill covering the full SDK surface, the cookbook's agent + Harbor harness, and the gotchas worth knowing about (vision-model coordinate caps, AppleScript/AX TCC, idle reaper). Point your assistant at it.
+
 ## Links
 
 - SDK: <https://github.com/josancamon19/use-computer-python>
