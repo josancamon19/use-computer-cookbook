@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-from mmini.sandbox import AsyncIOSSandbox
+from use_computer.sandbox import AsyncIOSSandbox
 
 from runner.agents.base import BaseCUAAgent
 

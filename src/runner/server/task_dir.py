@@ -19,7 +19,7 @@ def write_task_dir(task_dir: Path, task: dict, platform: str = "macos") -> None:
     (task_dir / "environment").mkdir(exist_ok=True)
 
     (task_dir / "instruction.md").write_text(task.get("instruction", ""))
-    # No [environment] block — mmini sandbox sizes (cpus/memory) are fixed by
+    # No [environment] block — use.computer sandbox sizes (cpus/memory) are fixed by
     # the warm-pool config on the gateway side; setting them here is ignored
     # at best and conflicts with UseComputerEnvironment._validate_definition.
     toml_lines = [

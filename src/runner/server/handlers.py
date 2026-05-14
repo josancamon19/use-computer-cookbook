@@ -32,7 +32,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if platform not in ("macos", "ios"):
         return web.json_response({"error": f"unknown platform: {platform}"}, status=400)
     gateway_url = body.get("gateway_url") or os.environ.get("GATEWAY_URL", "http://localhost:8080")
-    gateway_api_key = body.get("gateway_api_key") or os.environ.get("MMINI_API_KEY", "")
+    gateway_api_key = body.get("gateway_api_key") or os.environ.get("USE_COMPUTER_API_KEY", "")
 
     task_id = (body.get("task_id") or "task")[:16]
     # Prefer the gateway-supplied job_id (a layman label like
@@ -56,8 +56,8 @@ async def handle_run(request: web.Request) -> web.Response:
 
     env = os.environ.copy()
     if gateway_api_key:
-        env["MMINI_API_KEY"] = gateway_api_key
-    env["MMINI_GATEWAY_URL"] = gateway_url
+        env["USE_COMPUTER_API_KEY"] = gateway_api_key
+    env["USE_COMPUTER_BASE_URL"] = gateway_url
 
     # Per-customer Anthropic key. When the gateway forwards a customer-scoped
     # run it sends the user's saved sk-ant-... here so the agent runs against

@@ -1,6 +1,6 @@
 """iOS CUA agent — provider-agnostic via litellm.
 
-Uses a custom tool schema that mirrors the mmini iOS DSL surface (tap,
+Uses a custom tool schema that mirrors the use.computer iOS DSL surface (tap,
 swipe, type_text, press_button, wait, done). Works against any
 litellm-supported backend: anthropic, openai, gemini, fireworks, etc.
 The model is whatever string `model_name` resolves to ("anthropic/...",
@@ -25,7 +25,7 @@ from typing import Any, cast
 import litellm
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-from mmini.sandbox import AsyncIOSSandbox
+from use_computer.sandbox import AsyncIOSSandbox
 from PIL import Image
 
 from runner.agents.base import BaseCUAAgent, _annotate_click, load_prompt, resize_for_vision
@@ -229,7 +229,7 @@ def _data_url(image_bytes: bytes) -> str:
 
 
 class IOSAgent(BaseCUAAgent):
-    """iOS CUA agent — provider-agnostic, uses the mmini iOS DSL via litellm."""
+    """iOS CUA agent — provider-agnostic, uses the use.computer iOS DSL via litellm."""
 
     @staticmethod
     def name() -> str:

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harbor.environments.base import ExecResult
-from mmini.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, transpile
+from use_computer.ax_transpile import PRE_COMMAND_OSASCRIPT_TIMEOUT_S, needs_exec_ax, transpile
 
 from runner.environments.macos_runtime import remap_str, wrap_with_timeout
 

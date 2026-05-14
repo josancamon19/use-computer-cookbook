@@ -1,4 +1,4 @@
-"""Harbor environment that drives mmini sandboxes (macOS VMs or iOS sims)."""
+"""Harbor environment that drives use.computer sandboxes (macOS VMs or iOS sims)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from mmini.client import AsyncMmini
-from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox
+from use_computer.client import AsyncComputer
+from use_computer.sandbox import AsyncMacOSSandbox, AsyncSandbox
 
 from runner.environments import ios_runtime, macos_runtime
 from runner.environments import setup as setup_helpers
@@ -31,7 +31,7 @@ def _timer():
 
 
 class UseComputerEnvironment(BaseEnvironment):
-    """Runs harbor tasks on a mmini sandbox: macOS VMs or iOS simulators."""
+    """Runs harbor tasks on a use.computer sandbox: macOS VMs or iOS simulators."""
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class UseComputerEnvironment(BaseEnvironment):
     ):
         self._gateway_url = gateway_url
         self._ssh_user = ssh_user
-        self._host = host or os.environ.get("MMINI_HOST", "")
+        self._host = host or os.environ.get("USE_COMPUTER_HOST", "")
         self._platform = platform
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
@@ -58,16 +58,16 @@ class UseComputerEnvironment(BaseEnvironment):
         api_key = (
             api_key
             or os.environ.get("USE_COMPUTER_API_KEY")
-            or os.environ.get("MMINI_API_KEY", "")
+            or os.environ.get("USE_COMPUTER_API_KEY", "")
         )
         self._api_key = api_key
-        self._client = AsyncMmini(api_key=api_key, base_url=gateway_url)
+        self._client = AsyncComputer(api_key=api_key, base_url=gateway_url)
         self._sandbox: AsyncSandbox | None = None
         self._in_process_cmd: str | None = None
         self._in_process_step: int | None = None
 
-        # Wire SDK logs (mmini.*) into harbor's trial logger.
-        sdk_logger = logging.getLogger("mmini")
+        # Wire SDK logs (use_computer.*) into harbor's trial logger.
+        sdk_logger = logging.getLogger("use_computer")
         if logger and not sdk_logger.handlers:
             sdk_logger.setLevel(logging.DEBUG)
             for handler in logger.handlers:
@@ -129,24 +129,24 @@ class UseComputerEnvironment(BaseEnvironment):
         cfg = self.task_env_config
         if cfg.cpus > 1 and cfg.cpus != 4:
             self.logger.warning(
-                f"task requests {cfg.cpus} CPUs — mmini VMs are fixed at 4 cores"
+                f"task requests {cfg.cpus} CPUs — use.computer VMs are fixed at 4 cores"
             )
         if cfg.memory_mb > 0 and cfg.memory_mb != 8192:
             self.logger.warning(
-                f"task requests {cfg.memory_mb}MB memory — mmini VMs are fixed at 8GB"
+                f"task requests {cfg.memory_mb}MB memory — use.computer VMs are fixed at 8GB"
             )
         if cfg.storage_mb and cfg.storage_mb > 80 * 1024:
             self.logger.warning(
-                f"task requests {cfg.storage_mb}MB storage — mmini VMs have 80GB disks"
+                f"task requests {cfg.storage_mb}MB storage — use.computer VMs have 80GB disks"
             )
         if cfg.skills_dir:
-            self.logger.warning("task defines skills_dir — not yet supported in mmini")
+            self.logger.warning("task defines skills_dir — not yet supported in use.computer")
 
     async def start(self, force_build: bool = False) -> None:
         if self._sandbox_id is not None:
             return
 
-        self.logger.info(f"creating mmini sandbox (platform={self._platform})...")
+        self.logger.info(f"creating use.computer sandbox (platform={self._platform})...")
         with _timer() as t:
             if self._platform == "ios":
                 device_type, runtime = ios_runtime.read_ios_pin(self._task_dir)
@@ -195,7 +195,7 @@ class UseComputerEnvironment(BaseEnvironment):
         if delete:
             try:
                 await self._sandbox.close()
-                self.logger.info(f"mmini sandbox destroyed: {self._sandbox_id}")
+                self.logger.info(f"use.computer sandbox destroyed: {self._sandbox_id}")
             except Exception as e:  # noqa: BLE001
                 self.logger.error(f"failed to destroy sandbox: {e}")
         self._sandbox_id = None

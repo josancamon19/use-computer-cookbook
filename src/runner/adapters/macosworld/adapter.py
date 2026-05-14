@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-from mmini.ax_transpile import patch_curl_timeouts, transpile
+from use_computer.ax_transpile import patch_curl_timeouts, transpile
 
 # Benchmark_Backup items that a task can reference (keyword → actual filename)
 _BACKUP_ITEMS = {
@@ -120,7 +120,7 @@ def _build_test_sh(grading_cmds: list) -> str:
         "#!/bin/bash",
         "# Auto-generated grading script",
         "",
-        '# Detect path prefix (macOS SIP blocks /tests, so mmini uses /tmp/harbor)',
+        '# Detect path prefix (macOS SIP blocks /tests, so use.computer uses /tmp/harbor)',
         'PREFIX=""',
         '[ -d "/tmp/harbor/logs" ] && PREFIX="/tmp/harbor"',
         'REWARD="${PREFIX}/logs/verifier/reward.txt"',

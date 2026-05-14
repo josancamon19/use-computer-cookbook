@@ -17,10 +17,10 @@ import httpx
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
-from mmini.sandbox import AsyncMacOSSandbox, AsyncSandbox  # noqa: F401
+from use_computer.sandbox import AsyncMacOSSandbox, AsyncSandbox  # noqa: F401
 from PIL import Image
 
-_log = logging.getLogger("mmini.agent")
+_log = logging.getLogger("use_computer.agent")
 
 
 def vision_target_long_edge(model: str) -> int:
@@ -533,8 +533,8 @@ class BaseCUAAgent(BaseAgent):
     async def _fetch_reference_screenshot(self, task_id: str, filename: str) -> bytes | None:
         """GET <gateway>/admin/tasks/{task_id}/images/{filename}. Returns None on
         any failure — metrics are best-effort."""
-        gateway = os.environ.get("MMINI_GATEWAY_URL") or os.environ.get("GATEWAY_URL", "")
-        api_key = os.environ.get("MMINI_API_KEY", "")
+        gateway = os.environ.get("USE_COMPUTER_BASE_URL") or os.environ.get("GATEWAY_URL", "")
+        api_key = os.environ.get("USE_COMPUTER_API_KEY", "")
         if not gateway:
             return None
         url = f"{gateway.rstrip('/')}/admin/tasks/{task_id}/images/{filename}"

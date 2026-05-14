@@ -63,7 +63,7 @@ async def exec_local(
         full_env.update(extra_env)
     full_env["GATEWAY_URL"] = env._gateway_url
     full_env["SANDBOX_ID"] = env._sandbox_id or ""
-    full_env["MMINI_API_KEY"] = env._api_key
+    full_env["USE_COMPUTER_API_KEY"] = env._api_key
 
     timeout = timeout_sec or 60
     proc = None

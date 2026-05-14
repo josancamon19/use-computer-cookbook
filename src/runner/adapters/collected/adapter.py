@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from mmini import Mmini, TaskSummary
+from use_computer import Computer, TaskSummary
 
 RUNNER_DIR = Path(__file__).resolve().parents[4]
 COLLECTED_ROOT = RUNNER_DIR / "datasets" / "collected"
@@ -37,7 +37,7 @@ class CollectedTasksAdapter:
         gateway_url: str = "https://api.dev.use.computer",
         api_key: str = "",
     ):
-        self._client = Mmini(api_key=api_key or None, base_url=gateway_url)
+        self._client = Computer(api_key=api_key or None, base_url=gateway_url)
 
     def list_tasks(
         self, limit: int = 200, platform: Optional[str] = None
@@ -119,13 +119,13 @@ def main() -> int:
     )
     ap.add_argument(
         "--gateway",
-        default=os.environ.get("MMINI_GATEWAY_URL", "http://10.10.10.2:8081"),
+        default=os.environ.get("USE_COMPUTER_BASE_URL", "http://10.10.10.2:8081"),
         help="Gateway base URL (default: dev)",
     )
     ap.add_argument(
         "--api-key",
-        default=os.environ.get("MMINI_API_KEY", ""),
-        help="Bearer token (default: $MMINI_API_KEY)",
+        default=os.environ.get("USE_COMPUTER_API_KEY", ""),
+        help="Bearer token (default: $USE_COMPUTER_API_KEY)",
     )
     ap.add_argument(
         "--out",
@@ -140,7 +140,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if not args.api_key:
-        print("error: no $MMINI_API_KEY and no --api-key given", file=sys.stderr)
+        print("error: no $USE_COMPUTER_API_KEY and no --api-key given", file=sys.stderr)
         return 2
 
     out_root = Path(args.out).resolve()

@@ -64,7 +64,7 @@ def build_test_sh(graders: list, platform: str) -> str:
                     f"PAYLOAD={json.dumps(payload)}",
                     # Capture full response so per-checker results survive
                     # for the dashboard to display.
-                    'RESP=$(curl -sf -H "Authorization: Bearer $MMINI_API_KEY" '
+                    'RESP=$(curl -sf -H "Authorization: Bearer $USE_COMPUTER_API_KEY" '
                     '-H "Content-Type: application/json" '
                     '-X POST "$GATEWAY_URL/v1/sandboxes/$SANDBOX_ID/grade" '
                     '-d "$PAYLOAD" 2>/dev/null)',
@@ -81,7 +81,7 @@ def build_test_sh(graders: list, platform: str) -> str:
             if platform == "ios" and "curl " in cmd and "Authorization" not in cmd:
                 cmd = cmd.replace(
                     'curl -s "$GATEWAY_URL',
-                    'curl -s -H "Authorization: Bearer $MMINI_API_KEY" "$GATEWAY_URL',
+                    'curl -s -H "Authorization: Bearer $USE_COMPUTER_API_KEY" "$GATEWAY_URL',
                 )
             grader_sh += [
                 f"if ! bash -c {json.dumps(cmd)} 2>/dev/null | grep -qi 'true'; then",

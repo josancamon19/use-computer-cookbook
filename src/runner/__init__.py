@@ -1,1 +1,1 @@
-"""mmini Harbor runner — CUA agents, mmini environment, macOSWorld adapter."""
+"""use.computer Harbor runner — CUA agents, use.computer environment, macOSWorld adapter."""
