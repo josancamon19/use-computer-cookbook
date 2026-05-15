@@ -12,7 +12,8 @@ from runner.server.handlers import make_app
 def main() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     port = int(os.environ.get("PORT", "8090"))
-    web.run_app(make_app(), host="0.0.0.0", port=port)
+    host = os.environ.get("BIND_HOST", "127.0.0.1")
+    web.run_app(make_app(), host=host, port=port)
 
 
 if __name__ == "__main__":
