@@ -188,7 +188,7 @@ def _tools_for_platform(platform: str) -> list[dict[str, Any]]:
     if platform == "tvOS":
         names = {"remote", "launch", "press_key", "wait", "done"}
     elif platform == "visionOS":
-        names = {"tap", "swipe", "launch", "press_key", "wait", "done"}
+        names = {"launch", "wait", "done"}
     elif platform == "watchOS":
         names = {"tap", "swipe", "launch", "press_button", "press_key", "wait", "done"}
     else:
@@ -221,8 +221,9 @@ def _platform_prompt(platform: str) -> str:
         )
     if platform == "visionOS":
         return (
-            "Platform: visionOS. Use launch(bundle_id) to open apps. Taps/swipes target the "
-            "2D screenshot surface in display coordinates."
+            "Platform: visionOS. Coordinate taps/swipes are not reliable with the current "
+            "AXe/CoreSimulator input path. Use launch(bundle_id), wait, then done; if the task "
+            "requires in-app interaction, mark it incomplete instead of faking progress."
         )
     if platform == "watchOS":
         return (
