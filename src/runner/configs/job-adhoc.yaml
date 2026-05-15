@@ -8,7 +8,7 @@ environment:
     kwargs:
         gateway_url: https://api.use.computer
         platform: macos
-        # platform: ios
+        # platform: ios  # Apple simulator route: iPhone/iPad/Watch/TV/Vision via task device/runtime pins
     delete: true
 
 agents:

@@ -11,16 +11,18 @@ ios.apps.launch("com.apple.mobilesafari")       # by bundle id
 ios.apps.terminate("com.apple.mobilesafari")
 ios.apps.install("/path/to/app.app")            # path inside the simulator
 
-# Input — coordinates are in points
+# Input — coordinates are in the surface returned by ios.display.get_info()
 ios.input.tap(x, y)
 ios.input.swipe(from_x, from_y, to_x, to_y)
 ios.input.type_text("hello")                    # sends to the focused field
 ios.input.press_button(Button.HOME)             # HOME, LOCK, VOLUME_UP/DOWN, SIRI
 ios.input.press_key(Key.RETURN)                 # hardware key codes
+ios.input.press_remote("select")                # tvOS remote controls
 
 # Screen
 ios.screenshot.take_full_screen()               # PNG bytes
 ios.display.get_info()                          # device width/height in points
+ios.accessibility.get_tree()                    # best-effort AX tree
 ```
 
 `Button` and `Key` are enums in `use_computer.ios.input`. Strings work too — `ios.input.press_button("HOME")` is equivalent.
@@ -43,11 +45,13 @@ The runtime's OS family must match the device's family:
 | ------------ | -------------- | --------------------------------------------------------------- |
 | iPhone       | `iOS`          | Everything: tap, swipe, type, hardware buttons                  |
 | iPad         | `iOS`          | Same as iPhone, larger screen — tune coords against `display`   |
-| Apple Watch  | `watchOS`      | Screenshot + button presses. `input.tap` is a no-op today       |
-| Apple TV     | `tvOS`         | Screenshot + button presses. No touch surface; needs remote API |
-| Apple Vision | `visionOS`     | Screenshot only — input model isn't usable from a 2D viewer     |
+| Apple Watch  | `watchOS`      | Screenshot + best-effort tap/swipe/button/key/launch            |
+| Apple TV     | `tvOS`         | Screenshot + `input.press_remote` + launch/key                  |
+| Apple Vision | `visionOS`     | Screenshot + launch + tap/swipe against the 2D screenshot       |
 
-If you're driving anything other than iPhone/iPad, stick to `apps.*`, `screenshot.*`, and `input.press_button`. Touch verbs are accepted but won't behave the way they do on iOS.
+Accessibility trees are best-effort for Watch/TV/Vision. Use them when
+`available=True`; agents and collectors should fall back to screenshot-only
+observations when AX is empty or unavailable.
 
 To enumerate what the reservation's Mac mini actually has installed, the gateway exposes `/v1/platforms`. The cookbook's UI does this for you; from Python you can fetch it directly via `httpx` with the same bearer token.
 

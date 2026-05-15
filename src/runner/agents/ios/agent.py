@@ -1,7 +1,8 @@
 """iOS CUA agent — provider-agnostic via litellm.
 
-Uses a custom tool schema that mirrors the use.computer iOS DSL surface (tap,
-swipe, type_text, press_button, wait, done). Works against any
+Uses a custom tool schema that mirrors the use.computer Apple simulator DSL
+surface. Tools are gated by simulator platform so tvOS gets remote controls
+instead of misleading touch tools. Works against any
 litellm-supported backend: anthropic, openai, gemini, fireworks, etc.
 The model is whatever string `model_name` resolves to ("anthropic/...",
 "openai/...", "gemini/...", etc.) — litellm dispatches.
@@ -98,6 +99,18 @@ IOS_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "launch",
+            "description": "Launch an app by bundle identifier.",
+            "parameters": {
+                "type": "object",
+                "properties": {"bundle_id": {"type": "string"}},
+                "required": ["bundle_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "press_button",
             "description": "Press a hardware button.",
             "parameters": {
@@ -106,6 +119,35 @@ IOS_TOOLS: list[dict[str, Any]] = [
                     "button": {
                         "type": "string",
                         "enum": ["home", "lock", "siri", "side-button", "apple-pay"],
+                    },
+                },
+                "required": ["button"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "press_key",
+            "description": "Press a HID keycode such as return=40, escape=41, arrows=79-82.",
+            "parameters": {
+                "type": "object",
+                "properties": {"keycode": {"type": "integer"}},
+                "required": ["keycode"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remote",
+            "description": "Press an Apple TV remote-style control.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "button": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right", "select", "menu", "home", "play-pause"],
                     },
                 },
                 "required": ["button"],
@@ -142,6 +184,54 @@ IOS_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def _tools_for_platform(platform: str) -> list[dict[str, Any]]:
+    if platform == "tvOS":
+        names = {"remote", "launch", "press_key", "wait", "done"}
+    elif platform == "visionOS":
+        names = {"tap", "swipe", "launch", "press_key", "wait", "done"}
+    elif platform == "watchOS":
+        names = {"tap", "swipe", "launch", "press_button", "press_key", "wait", "done"}
+    else:
+        names = {"tap", "swipe", "type_text", "launch", "press_button", "press_key", "wait", "done"}
+    return [t for t in IOS_TOOLS if t["function"]["name"] in names]
+
+
+def _platform_from_display_info(info: Any) -> str:
+    platform = getattr(info, "platform", "") or ""
+    device_type = getattr(info, "device_type", "") or ""
+    runtime = getattr(info, "runtime", "") or ""
+    if platform:
+        return platform
+    if "Apple-TV" in device_type or "tvOS" in runtime:
+        return "tvOS"
+    if "Apple-Vision" in device_type or "visionOS" in runtime or "xrOS" in runtime:
+        return "visionOS"
+    if "Apple-Watch" in device_type or "watchOS" in runtime:
+        return "watchOS"
+    if "iPad" in device_type:
+        return "iPadOS"
+    return "iOS"
+
+
+def _platform_prompt(platform: str) -> str:
+    if platform == "tvOS":
+        return (
+            "Platform: tvOS. There is no touch surface. Navigate with remote(up/down/left/right/"
+            "select/menu/home/play-pause), launch(bundle_id), press_key, wait, then done."
+        )
+    if platform == "visionOS":
+        return (
+            "Platform: visionOS. Use launch(bundle_id) to open apps. Taps/swipes target the "
+            "2D screenshot surface in display coordinates."
+        )
+    if platform == "watchOS":
+        return (
+            "Platform: watchOS. The screen is small; tap/swipe/button/key are best-effort. "
+            "Prefer launch(bundle_id) when opening apps."
+        )
+    return "Platform: iPhone/iPad simulator. Touch, typing, launch, buttons, and keys are available."
+
+
 async def _execute_ios_tool(
     sandbox: AsyncIOSSandbox,
     tool_name: str,
@@ -167,9 +257,19 @@ async def _execute_ios_tool(
     if tool_name == "type_text":
         await sandbox.input.type_text(tool_input["text"])
         return f"type_text({tool_input['text']!r})", False
+    if tool_name == "launch":
+        bundle_id = tool_input.get("bundle_id") or tool_input.get("bundleId")
+        await sandbox.apps.launch(bundle_id)
+        return f"launch({bundle_id})", False
     if tool_name == "press_button":
         await sandbox.input.press_button(tool_input["button"])
         return f"press_button({tool_input['button']})", False
+    if tool_name == "press_key":
+        await sandbox.input.press_key(int(tool_input["keycode"]))
+        return f"press_key({tool_input['keycode']})", False
+    if tool_name == "remote":
+        await sandbox.input.press_remote(tool_input["button"])
+        return f"remote({tool_input['button']})", False
     if tool_name == "wait":
         await asyncio.sleep(float(tool_input["duration"]))
         return f"wait({tool_input['duration']}s)", False
@@ -265,15 +365,17 @@ class IOSAgent(BaseCUAAgent):
         # axe tap/swipe interpret coords as logical POINTS, not pixels.
         # Override sx/sy to map api-space → points (e.g. iPhone 17 Pro: 402×874).
         info = await sandbox.display.get_info()
+        platform = _platform_from_display_info(info)
         point_w, point_h = info.width, info.height
         sx = point_w / api_w
         sy = point_h / api_h
         self.logger.info(
-            f"iOS screen={screen_w}x{screen_h}px points={point_w}x{point_h} "
+            f"simulator platform={platform} screen={screen_w}x{screen_h}px display={point_w}x{point_h} "
             f"api={api_w}x{api_h} sx={sx:.4f} sy={sy:.4f} model={model}"
         )
 
         prompt_template = load_prompt("ios.txt")
+        tools = _tools_for_platform(platform)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": ""},
             {
@@ -291,7 +393,9 @@ class IOSAgent(BaseCUAAgent):
 
             messages[0] = {
                 "role": "system",
-                "content": _build_ios_system_prompt(
+                "content": _platform_prompt(platform)
+                + "\n\n"
+                + _build_ios_system_prompt(
                     prompt_template,
                     api_w,
                     api_h,
@@ -306,7 +410,7 @@ class IOSAgent(BaseCUAAgent):
                 response = await litellm.acompletion(
                     model=model,
                     messages=messages,
-                    tools=IOS_TOOLS,
+                    tools=tools,
                     max_tokens=4096,
                 )
             except Exception as e:

@@ -41,7 +41,7 @@ uv run harbor run -c src/runner/configs/job-adhoc.yaml -p datasets/adhoc/macos -
 | `runner.agents.macos.openai:OpenAICUAAgent`       | OpenAI computer-use preview                            |
 | `runner.agents.macos.gemini:GeminiCUAAgent`       | Gemini computer-use                                    |
 | `runner.agents.macos.generic:GenericCUAAgent`     | Any OpenAI-compatible endpoint (Fireworks, vLLM, etc.) |
-| `runner.agents.ios.agent:IOSAgent`                | Claude-driven iOS simulator agent                      |
+| `runner.agents.ios.agent:IOSAgent`                | Apple simulator agent for iPhone/iPad/Watch/TV/Vision  |
 
 All five inherit from `runner.agents.base` (shared screenshot prep, coord scaling, action dispatch). Switching providers is a 1-line YAML change.
 
@@ -79,6 +79,7 @@ If you're writing a custom agent (in this cookbook or elsewhere), **use these he
 - On `start()`: instantiates `Computer(api_key=…, base_url=gateway_url)`, calls `cc.create(type=platform, ...)`, exposes the sandbox to the agent via `self.sandbox`.
 - On `stop()`: calls `sandbox.destroy()` (skipped if `delete: false`). The reservation's idle reaper handles anything missed.
 - It also reads optional iOS `device_type` and `runtime` from the task JSON when `platform: ios`, so per-task iOS configs work without YAML changes.
+- The `ios` route is the Apple simulator route: task pins can target iPhone/iPad, Watch, TV, or Vision. The agent switches tools by platform, using remote controls for tvOS and best-effort accessibility only when available.
 
 For local dev (no real reservation), point `gateway_url` at `http://localhost:<port>` and the same code works against a local gateway.
 
