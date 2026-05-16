@@ -28,7 +28,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if not task.get("instruction"):
         return web.json_response({"error": "task.instruction required"}, status=400)
     model = body.get("model", "claude-sonnet-4-6")
-    max_steps = int(body.get("max_steps", 30))
+    max_steps = int(body.get("max_steps", 50))
     platform = (body.get("platform") or task.get("platform") or "macos").lower()
     if platform not in ("macos", "ios"):
         return web.json_response({"error": f"unknown platform: {platform}"}, status=400)
