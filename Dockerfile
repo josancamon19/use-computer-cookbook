@@ -5,12 +5,18 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
+RUN useradd -m -u 1001 -s /bin/bash svc
 
 # Build context is the deploy dir (see docker-compose.yml). Copy runner + sdk
 # so pyproject's editable path dep (`mmini = { path = "../sdk" }`) resolves.
 COPY runner /repo/runner
 COPY sdk /repo/sdk
+RUN chown -R svc:svc /repo
 
+USER svc
+ENV HOME=/home/svc \
+    UV_LINK_MODE=copy \
+    PATH="/repo/runner/.venv/bin:/home/svc/.local/bin:${PATH}"
 WORKDIR /repo/runner
 RUN uv sync --frozen
 # aiohttp / pyyaml for the thin HTTP shim; everything else comes via uv sync
