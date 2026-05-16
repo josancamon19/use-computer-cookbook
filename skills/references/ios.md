@@ -15,7 +15,7 @@ ios.apps.install("/path/to/app.app")            # path inside the simulator
 ios.input.tap(x, y)
 ios.input.long_press(x, y, duration=1.0)
 ios.input.swipe(from_x, from_y, to_x, to_y)
-ios.input.type_text("hello")                    # sends to the focused field
+ios.input.type_text("hello")                    # iPhone/iPad only; unsupported on watchOS
 ios.input.press_button(Button.HOME)             # HOME, LOCK, VOLUME_UP/DOWN, SIRI
 ios.input.press_key(Key.RETURN)                 # hardware key codes
 ios.input.press_remote("select")                # tvOS remote controls
