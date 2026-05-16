@@ -242,6 +242,11 @@ class DebugCUAAgent(BaseCUAAgent):
             await sandbox.input.press_button(btn)
         elif fn in ("key", "press_key"):
             await sandbox.input.press_key(int(args["keycode"]))
+        elif fn in ("remote", "press_remote"):
+            await sandbox.input.press_remote(args.get("button", "select"))
+        elif fn == "launch":
+            bundle_id = args.get("bundleId") or args.get("bundle_id", "")
+            await sandbox.apps.launch(bundle_id)
         elif fn == "open_url":
             await sandbox.apps.open_url(args.get("url", ""))
         else:
