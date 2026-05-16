@@ -13,14 +13,29 @@ def agent_spec_for(model: str, max_steps: int = 30, platform: str = "macos") -> 
             "kwargs": {"max_steps": max_steps, "replay": True},
         }
     if platform == "ios":
-        # iOS uses a custom tool schema (tap/swipe/button/...) so generic and
-        # macOS-shaped agents don't apply. Only Anthropic for now.
+        # iOS uses a custom tool schema (tap/swipe/button/...). IOSAgent
+        # dispatches via litellm so the model prefix selects the provider:
+        # anthropic/* → Claude, openai/* → GPT, gemini/* → Gemini.
         return {
             "import_path": "runner.agents.ios.agent:IOSAgent",
             "model_name": model if "/" in model else f"anthropic/{model}",
             "kwargs": {"max_steps": max_steps},
         }
-    if "kimi" in model or "moonshot" in model or model.startswith("openai/"):
+    # macOS: dispatch to a provider-native CUA agent based on the model prefix.
+    if model.startswith("gemini/") or "gemini" in model:
+        return {
+            "import_path": "runner.agents.macos.gemini:GeminiCUAAgent",
+            "model_name": model if "/" in model else f"gemini/{model}",
+            "kwargs": {"max_steps": max_steps},
+        }
+    if model.startswith("openai/") or "gpt" in model:
+        return {
+            "import_path": "runner.agents.macos.openai:OpenAICUAAgent",
+            "model_name": model if "/" in model else f"openai/{model}",
+            "kwargs": {"max_steps": max_steps},
+        }
+    if "kimi" in model or "moonshot" in model:
+        # Fireworks-hosted open models — keep the generic path.
         return {
             "import_path": "runner.agents.macos.generic:GenericCUAAgent",
             "model_name": model if "/" in model else f"openai/{model}",
