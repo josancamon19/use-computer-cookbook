@@ -50,6 +50,10 @@ def flatten_trial_dir(work_dir: Path) -> Path | None:
     the trial as its child.
 
     Returns the new trial dir, or None if nothing to flatten."""
+    flat = find_flat_trial_dir(work_dir)
+    if flat is not None:
+        return flat
+
     inner_jobs = work_dir / "jobs"
     if not inner_jobs.exists():
         return None
@@ -76,6 +80,15 @@ def flatten_trial_dir(work_dir: Path) -> Path | None:
             break
         break
     return moved_trial
+
+
+def find_flat_trial_dir(work_dir: Path) -> Path | None:
+    for entry in sorted(work_dir.iterdir()):
+        if not entry.is_dir() or entry.name in {"task", "jobs", "artifacts"}:
+            continue
+        if (entry / "result.json").exists():
+            return entry
+    return None
 
 
 def find_trial_dir(jobs_dir: Path) -> Path | None:
