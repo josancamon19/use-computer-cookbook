@@ -60,17 +60,31 @@ def build_test_sh(graders: list, platform: str) -> str:
             spec = try_parse_spec(cmd)
             if spec is not None:
                 payload = json.dumps({"specs": spec})
+                # Old version grepped for '"passed": true' anywhere in the
+                # response — but the response is
+                # {"passed": <top>, "results": [{"passed": ..., ...}, ...]}
+                # so a single passing nested check made the whole grader
+                # silently pass. Parse the JSON properly and gate on the
+                # top-level field. python3 is guaranteed on the runner host
+                # (iOS path) and on the macOS VM base image.
                 grader_sh += [
                     f"PAYLOAD={json.dumps(payload)}",
-                    # Capture full response so per-checker results survive
-                    # for the dashboard to display.
                     'RESP=$(curl -sf -H "Authorization: Bearer $USE_COMPUTER_API_KEY" '
                     '-H "Content-Type: application/json" '
                     '-X POST "$GATEWAY_URL/v1/sandboxes/$SANDBOX_ID/grade" '
                     '-d "$PAYLOAD" 2>/dev/null)',
-                    'mkdir -p "${PREFIX}/logs/verifier"',
-                    'echo "$RESP" > "${PREFIX}/logs/verifier/grader_checks.json"',
-                    'if ! echo "$RESP" | grep -qE \'"passed"[[:space:]]*:[[:space:]]*true\'; then',
+                    # Also write to /logs/verifier/ (not PREFIX-prefixed) so
+                    # ios_runtime.py's path rewrite lands the file inside the
+                    # trial's verifier/ dir where the dashboard reads it.
+                    # Writing to both is fine — harbor keeps the PREFIX copy,
+                    # runner keeps the rewritten copy.
+                    'mkdir -p "${PREFIX}/logs/verifier" /logs/verifier 2>/dev/null',
+                    'echo "$RESP" > "${PREFIX}/logs/verifier/grader_checks.json" 2>/dev/null || true',
+                    'echo "$RESP" > "/logs/verifier/grader_checks.json" 2>/dev/null || true',
+                    'if ! printf "%s" "$RESP" | python3 -c '
+                    "'import sys, json; "
+                    "sys.exit(0 if json.loads(sys.stdin.read() or \"{}\").get(\"passed\") is True else 1)' "
+                    '2>/dev/null; then',
                     '  echo "0" > "$REWARD"; echo "Score: 0"; exit 0',
                     "fi",
                 ]
