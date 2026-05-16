@@ -23,14 +23,22 @@ def expand_ios_id(short: str, kind: str) -> str:
 
 
 def read_ios_pin(task_dir: Path) -> tuple[str, str]:
-    """Pull (device_type, runtime) from task.toml's [ios] block, fully expanded."""
+    """Pull (device_type, runtime) from task.toml's [ios] block, fully expanded.
+
+    Returns ("", "") when the file or [ios] block is missing — callers can fall
+    back to the YAML-level default (job-adhoc.yaml `environment.kwargs`) or the
+    gateway's iPhone 17 Pro default.
+    """
     toml_path = task_dir / "task.toml"
+    if not toml_path.exists():
+        return ("", "")
     data = tomllib.loads(toml_path.read_text())
-    device_type = data["ios"]['device_type'].strip()
-    runtime = data['ios']['runtime'].strip()
+    ios = data.get("ios") or {}
+    device_type = (ios.get("device_type") or "").strip()
+    runtime = (ios.get("runtime") or "").strip()
     return (
-        expand_ios_id(device_type, "SimDeviceType"),
-        expand_ios_id(runtime, "SimRuntime"),
+        expand_ios_id(device_type, "SimDeviceType") if device_type else "",
+        expand_ios_id(runtime, "SimRuntime") if runtime else "",
     )
 
 

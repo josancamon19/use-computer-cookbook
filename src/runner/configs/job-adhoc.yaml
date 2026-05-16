@@ -8,12 +8,49 @@ environment:
     kwargs:
         gateway_url: https://api.use.computer
         platform: macos
-        # platform: ios  # Apple simulator route: iPhone/iPad/Watch/TV/Vision via task device/runtime pins
+        # platform: ios  # Apple simulator route: iPhone/iPad/Watch/TV/Vision
+        #
+        # Optional iOS pin. Used when the task.toml doesn't set its own
+        # device_type / runtime. Lets you retarget the whole dataset at a
+        # different simulator without regenerating tasks. If a task sets its
+        # own device_type or runtime, that overrides this YAML value.
+        #
+        # iPhone (default if both blank):
+        # device_type: iPhone-17-Pro
+        # runtime: iOS-26-4
+        #
+        # Apple TV:
+        # device_type: Apple-TV-4K-3rd-generation-1080p
+        # runtime: tvOS-26-4
+        #
+        # Apple Watch:
+        # device_type: Apple-Watch-Ultra-3-49mm
+        # runtime: watchOS-26-4
+        #
+        # Apple Vision (BETA — input.tap is a no-op on visionOS):
+        # device_type: Apple-Vision-Pro-4K
+        # runtime: visionOS-26
     delete: true
 
 agents:
+    # macOS: one agent class per provider.
     - import_path: runner.agents.macos.anthropic:AnthropicCUAAgent
-      # - import_path: runner.agents.ios.agent:IOSAgent
       model_name: anthropic/claude-sonnet-4-6
       kwargs:
           max_steps: 50
+    # - import_path: runner.agents.macos.openai:OpenAICUAAgent
+    #   model_name: openai/gpt-5.5
+    #   kwargs: { max_steps: 50 }
+    # - import_path: runner.agents.macos.gemini:GeminiCUAAgent
+    #   model_name: gemini/gemini-3.1-pro
+    #   kwargs: { max_steps: 50 }
+    #
+    # iOS: a single unified agent class dispatches by the model_name prefix
+    # (anthropic/* → Claude, openai/* or gpt-* → OpenAI, gemini/* → Gemini).
+    # Stack multiple entries to compare providers on the same trials.
+    # - import_path: runner.agents.ios.agent:IOSAgent
+    #   model_name: anthropic/claude-sonnet-4-6
+    #   kwargs: { max_steps: 50 }
+    # - import_path: runner.agents.ios.agent:IOSAgent
+    #   model_name: gemini/gemini-3.1-pro
+    #   kwargs: { max_steps: 50 }

@@ -18,6 +18,10 @@ uv run harbor run -c src/runner/configs/job-macosworld.yaml --env-file .env
 | `job-macosworld.yaml` | [macOSWorld](https://macos-world.github.io) | Claude Sonnet 4.6 + Kimi K2.5 + Qwen 3.6                                       |
 | `job-adhoc.yaml`      | hand-written prompts (macOS or iOS)         | Claude Sonnet 4.6 — flip `platform:` and the agent `import_path` for iOS       |
 
+For iOS adhoc, `job-adhoc.yaml` accepts an optional `environment.kwargs.device_type` / `runtime` (commented examples in the file for Apple TV, Apple Watch, Apple Vision). If a task in `tasks/ios.json` sets its own `device_type` / `runtime`, that overrides the YAML; otherwise the YAML values are used.
+
+iOS uses a single unified agent — `runner.agents.ios.agent:IOSAgent` — that dispatches to the right provider based on the `model_name` prefix (`anthropic/*`, `openai/*` / `gpt-*`, `gemini/*`). To compare providers on the same iOS trials, stack multiple `IOSAgent` entries in `agents:` with different `model_name`s. macOS still has one agent class per provider.
+
 ## Layout
 
 ```

@@ -16,6 +16,9 @@ environment:
     kwargs:
         gateway_url: https://api.use.computer
         platform: macos # or "ios"
+        # Optional iOS pin (ignored on macOS).
+        # device_type: Apple-TV-4K-3rd-generation-1080p
+        # runtime:     tvOS-26-4
     delete: true # destroy sandbox on trial finish
 
 agents:
@@ -35,15 +38,17 @@ uv run harbor run -c src/runner/configs/job-adhoc.yaml -p datasets/adhoc/macos -
 
 ## Available agents
 
-| `import_path`                                     | What it is                                             |
-| ------------------------------------------------- | ------------------------------------------------------ |
-| `runner.agents.macos.anthropic:AnthropicCUAAgent` | Claude computer-use (macOS)                            |
-| `runner.agents.macos.openai:OpenAICUAAgent`       | OpenAI computer-use preview                            |
-| `runner.agents.macos.gemini:GeminiCUAAgent`       | Gemini computer-use                                    |
-| `runner.agents.macos.generic:GenericCUAAgent`     | Any OpenAI-compatible endpoint (Fireworks, vLLM, etc.) |
-| `runner.agents.ios.agent:IOSAgent`                | Apple simulator agent for iPhone/iPad/Watch/TV/Vision  |
+| `import_path`                                     | What it is                                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `runner.agents.macos.anthropic:AnthropicCUAAgent` | Claude computer-use (macOS)                                                      |
+| `runner.agents.macos.openai:OpenAICUAAgent`       | OpenAI computer-use preview (macOS)                                              |
+| `runner.agents.macos.gemini:GeminiCUAAgent`       | Gemini computer-use (macOS)                                                      |
+| `runner.agents.macos.generic:GenericCUAAgent`     | Any OpenAI-compatible endpoint (Fireworks, vLLM, etc.) — macOS                   |
+| `runner.agents.ios.agent:IOSAgent`                | iOS / iPadOS / watchOS / tvOS / visionOS — **dispatches by `model_name` prefix** |
 
 All five inherit from `runner.agents.base` (shared screenshot prep, coord scaling, action dispatch). Switching providers is a 1-line YAML change.
+
+**macOS vs iOS dispatch differs.** macOS has one agent class per provider — pick the matching `import_path` and set `model_name`. iOS uses a single `IOSAgent` class that routes internally based on `model_name`: `anthropic/*` → Claude tool-use loop, `openai/*` or `gpt-*` → OpenAI Responses API, `gemini/*` → Gemini computer-use. To compare providers on the same iOS trials, stack multiple `IOSAgent` entries with different `model_name`s; Harbor fans them out the same way it does for macOS.
 
 ## Coordinate scaling — `runner.agents.base`
 
@@ -117,6 +122,55 @@ Each adapter has its own `export` entry point — e.g.:
 ```bash
 uv run python -m runner.adapters.adhoc.export src/runner/adapters/adhoc/tasks/macos.json --clean
 ```
+
+## iOS grader DSL — JSON checker specs
+
+iOS sims have no shell — AppleScript / bash graders don't run. Instead, iOS tasks declare a list of checker specs that the gateway evaluates against the live accessibility tree via `POST /v1/sandboxes/{id}/grade`. `runner.server.grader.build_test_sh` builds the bash wrapper; you only write the spec list.
+
+```json
+// tasks/ios.json (per-task `checks` array on a single task)
+{
+    "instruction": "In Maps, start walking directions from 1177 Market to 30 Otis.",
+    "checks": [
+        { "kind": "foreground_app", "name": "Maps" },
+        { "kind": "label_contains", "text": "Directions" },
+        { "kind": "label_contains", "text": "1177 Market" },
+        { "kind": "label_contains", "text": "30 Otis" },
+        { "kind": "label_regex", "pattern": "\\b\\d+\\s*min\\b" }
+    ]
+}
+```
+
+Supported `kind`s (live registry in `gateway/internal/collect/checkers.go`):
+
+| `kind`           | Parameters             | Passes when                                              |
+| ---------------- | ---------------------- | -------------------------------------------------------- |
+| `foreground_app` | `name`                 | Top-level Application node's `AXLabel` equals `name`.    |
+| `label_contains` | `text`                 | Any node's `AXLabel` contains `text` (case-insensitive). |
+| `label_regex`    | `pattern`              | Any node's `AXLabel` matches the regex.                  |
+| `value_contains` | `text`                 | Any node's `AXValue` contains `text`.                    |
+| `value_regex`    | `pattern`              | Any node's `AXValue` matches the regex.                  |
+| `type_present`   | `type` (e.g. `Button`) | Any node has the given AX type.                          |
+
+**Response shape (matters when writing custom verifier wrappers):**
+
+```json
+{
+    "passed": false,
+    "results": [
+        { "passed": true, "spec": { "kind": "label_contains", "text": "Directions" }, "details": "" },
+        {
+            "passed": false,
+            "spec": { "kind": "foreground_app", "name": "Maps" },
+            "details": "foreground app is \"Springboard\", want \"maps\""
+        }
+    ]
+}
+```
+
+Top-level `passed` is the AND of every `results[].passed`. **Always gate on the top-level field**, not on a string-grep against the body — nested per-check `"passed": true` will match too and silently inflate the score. The bundled wrapper uses `python3 -c '... json.loads(sys.stdin.read()).get("passed")'` for that reason.
+
+Per-check results land in `verifier/grader_checks.json` inside the trial dir; the dashboard renders them as a "GRADER CHECKS (passed/total)" block on the run detail page.
 
 ## Running side-by-side comparisons
 

@@ -1,6 +1,14 @@
 # iOS sandbox reference
 
-`IOSSandbox` is `Computer().create(type="ios", device_type=..., runtime=...)`. The sandbox is a backing CoreSimulator instance booted on a Mac mini. The simulator family (iPhone / iPad / Watch / TV / Vision) is encoded in `device_type`; if you omit it, the gateway picks an iPhone default.
+`IOSSandbox` is `Computer().create(type=SandboxType.IOS, family=SimulatorFamily.X)` — the sandbox is a backing CoreSimulator instance booted on a Mac mini. Pass `family=SimulatorFamily.IPHONE` / `IPAD` / `WATCH` / `TV` / `VISION` and the SDK resolves a compatible installed `device_type` + `runtime` pair from `/v1/platforms`. If you omit `family`, the gateway defaults to iPhone 17 Pro on the latest installed iOS runtime. You can still pin raw CoreSimulator identifiers (`device_type=...`, `runtime=...`) when you need a specific build.
+
+```python
+from use_computer import Computer, SandboxType, SimulatorFamily
+
+iphone = Computer().create(type=SandboxType.IOS, family=SimulatorFamily.IPHONE)
+tv     = Computer().create(type=SandboxType.IOS, family=SimulatorFamily.TV)
+watch  = Computer().create(type=SandboxType.IOS, family=SimulatorFamily.WATCH)
+```
 
 ## DSL surface
 
@@ -30,11 +38,11 @@ ios.accessibility.get_tree()                    # best-effort AX tree
 
 ## Device families
 
-When the user (or the cookbook YAML) creates an iOS sandbox, `device_type` and `runtime` decide what hardware is simulated:
+Prefer `family=SimulatorFamily.X` (top of this file). Direct pinning is available when you need a specific build:
 
 ```python
 ios = cc.create(
-    type="ios",
+    type=SandboxType.IOS,
     device_type="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
     runtime="com.apple.CoreSimulator.SimRuntime.iOS-26-4",
 )
@@ -42,17 +50,31 @@ ios = cc.create(
 
 The runtime's OS family must match the device's family:
 
-| Family       | Runtime family | What works                                                      |
-| ------------ | -------------- | --------------------------------------------------------------- |
-| iPhone       | `iOS`          | Everything: tap, long press, swipe, type, hardware buttons      |
-| iPad         | `iOS`          | Same as iPhone, larger screen — tune coords against `display`   |
-| Apple Watch  | `watchOS`      | Screenshot + best-effort tap/long press/swipe/button/key/launch |
-| Apple TV     | `tvOS`         | Screenshot + `input.press_remote` + launch/key                  |
-| Apple Vision | `visionOS`     | Screenshot + launch + tap/swipe against the 2D screenshot       |
+| Family       | Runtime family        | What works                                                                                                                                                                |
+| ------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| iPhone       | `iOS`                 | Everything: tap, long press, swipe, type, hardware buttons                                                                                                                |
+| iPad         | `iOS`                 | Same as iPhone, larger screen — tune coords against `display`                                                                                                             |
+| Apple Watch  | `watchOS`             | Screenshot + tap / swipe / press_button (crown, side) + key. **`type_text` unsupported** on watchOS.                                                                      |
+| Apple TV     | `tvOS`                | Screenshot + **`input.press_remote(...)`** (up/down/left/right/select/menu/home/play_pause) + app launch. No touch.                                                       |
+| Apple Vision | `visionOS` (**BETA**) | Screenshot + app launch + `display.get_info()`. **`input.tap` is a no-op today** — there's no XCTest-free coordinate tap path. Plan visionOS work around read-only flows. |
 
 Accessibility trees are best-effort for Watch/TV/Vision. Use them when
 `available=True`; agents and collectors should fall back to screenshot-only
 observations when AX is empty or unavailable.
+
+### YAML-level pin (cookbook only)
+
+When you're running via Harbor and want to retarget the whole dataset at a different simulator without regenerating tasks, set `device_type` / `runtime` in `job-adhoc.yaml`'s `environment.kwargs`:
+
+```yaml
+environment:
+    kwargs:
+        platform: ios
+        # device_type: Apple-TV-4K-3rd-generation-1080p
+        # runtime:     tvOS-26-4
+```
+
+If a task sets `device_type` / `runtime` in `tasks/ios.json` (which the exporter writes to `task.toml` `[ios]`), that overrides the YAML; otherwise the YAML values are used.
 
 To enumerate what the reservation's Mac mini actually has installed, the gateway exposes `/v1/platforms`. The cookbook's UI does this for you; from Python you can fetch it directly via `httpx` with the same bearer token.
 

@@ -46,12 +46,20 @@ class UseComputerEnvironment(BaseEnvironment):
         ssh_user: str = "lume",
         host: str = "",
         platform: str = "macos",
+        device_type: str = "",
+        runtime: str = "",
         **kwargs,
     ):
         self._gateway_url = gateway_url
         self._ssh_user = ssh_user
         self._host = host or os.environ.get("USE_COMPUTER_HOST", "")
         self._platform = platform
+        # YAML-level iOS pin (job-adhoc.yaml `environment.kwargs.device_type` /
+        # `.runtime`). Used as a fallback when the task.toml doesn't pin one.
+        # Lets the same dataset target different sims by editing one YAML line
+        # instead of regenerating every task.
+        self._yaml_device_type = device_type
+        self._yaml_runtime = runtime
         self._sandbox_id: str | None = None
         self._vm_ip: str | None = None
         self._task_dir: Path = environment_dir.parent
@@ -150,6 +158,15 @@ class UseComputerEnvironment(BaseEnvironment):
         with _timer() as t:
             if self._platform == "ios":
                 device_type, runtime = ios_runtime.read_ios_pin(self._task_dir)
+                # task.toml wins; YAML kwargs fill in whatever the task left blank.
+                if not device_type and self._yaml_device_type:
+                    device_type = ios_runtime.expand_ios_id(
+                        self._yaml_device_type.strip(), "SimDeviceType"
+                    )
+                if not runtime and self._yaml_runtime:
+                    runtime = ios_runtime.expand_ios_id(
+                        self._yaml_runtime.strip(), "SimRuntime"
+                    )
                 if device_type or runtime:
                     self.logger.info(
                         f"ios pin: device_type={device_type!r} runtime={runtime!r}"
