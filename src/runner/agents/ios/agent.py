@@ -66,6 +66,22 @@ IOS_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "long_press",
+            "description": "Touch and hold at the given (x, y) coordinate for duration seconds.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                    "duration": {"type": "number", "default": 1.0},
+                },
+                "required": ["x", "y"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "swipe",
             "description": (
                 "Drag a finger from (from_x, from_y) to (to_x, to_y). The content "
@@ -190,9 +206,9 @@ def _tools_for_platform(platform: str) -> list[dict[str, Any]]:
     elif platform == "visionOS":
         names = {"launch", "wait", "done"}
     elif platform == "watchOS":
-        names = {"tap", "swipe", "launch", "press_button", "press_key", "wait", "done"}
+        names = {"tap", "long_press", "swipe", "launch", "press_button", "press_key", "wait", "done"}
     else:
-        names = {"tap", "swipe", "type_text", "launch", "press_button", "press_key", "wait", "done"}
+        names = {"tap", "long_press", "swipe", "type_text", "launch", "press_button", "press_key", "wait", "done"}
     return [t for t in IOS_TOOLS if t["function"]["name"] in names]
 
 
@@ -247,6 +263,10 @@ async def _execute_ios_tool(
     if tool_name == "tap":
         await sandbox.input.tap(float(tool_input["x"]), float(tool_input["y"]))
         return "tap", False
+    if tool_name == "long_press":
+        duration = float(tool_input.get("duration") or 1.0)
+        await sandbox.input.long_press(float(tool_input["x"]), float(tool_input["y"]), duration)
+        return f"long_press({duration:.1f}s)", False
     if tool_name == "swipe":
         await sandbox.input.swipe(
             float(tool_input["from_x"]),

@@ -13,6 +13,7 @@ ios.apps.install("/path/to/app.app")            # path inside the simulator
 
 # Input — coordinates are in the surface returned by ios.display.get_info()
 ios.input.tap(x, y)
+ios.input.long_press(x, y, duration=1.0)
 ios.input.swipe(from_x, from_y, to_x, to_y)
 ios.input.type_text("hello")                    # sends to the focused field
 ios.input.press_button(Button.HOME)             # HOME, LOCK, VOLUME_UP/DOWN, SIRI
@@ -43,9 +44,9 @@ The runtime's OS family must match the device's family:
 
 | Family       | Runtime family | What works                                                      |
 | ------------ | -------------- | --------------------------------------------------------------- |
-| iPhone       | `iOS`          | Everything: tap, swipe, type, hardware buttons                  |
+| iPhone       | `iOS`          | Everything: tap, long press, swipe, type, hardware buttons      |
 | iPad         | `iOS`          | Same as iPhone, larger screen — tune coords against `display`   |
-| Apple Watch  | `watchOS`      | Screenshot + best-effort tap/swipe/button/key/launch            |
+| Apple Watch  | `watchOS`      | Screenshot + best-effort tap/long press/swipe/button/key/launch |
 | Apple TV     | `tvOS`         | Screenshot + `input.press_remote` + launch/key                  |
 | Apple Vision | `visionOS`     | Screenshot + launch + tap/swipe against the 2D screenshot       |
 

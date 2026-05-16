@@ -42,7 +42,7 @@ ACTION_POOL = [
 ]
 
 # iOS DSL has a smaller surface — no mouse, no keyboard hotkeys, no exec.
-ACTION_POOL_IOS = ["tap", "swipe", "type", "button", "tap", "swipe"]
+ACTION_POOL_IOS = ["tap", "long_press", "swipe", "type", "button", "tap", "swipe"]
 
 
 class DebugCUAAgent(BaseCUAAgent):
@@ -222,6 +222,12 @@ class DebugCUAAgent(BaseCUAAgent):
         args = action.get("args") or {}
         if fn == "tap":
             await sandbox.input.tap(float(args["x"]), float(args["y"]))
+        elif fn == "long_press":
+            await sandbox.input.long_press(
+                float(args["x"]),
+                float(args["y"]),
+                float(args.get("duration") or 1.0),
+            )
         elif fn == "swipe":
             # Gateway records camelCase; SDK takes snake_case.
             from_x = float(args.get("fromX") or args.get("from_x", 0))
@@ -423,6 +429,8 @@ class DebugCUAAgent(BaseCUAAgent):
         """iOS DSL canonical actions — fixed coordinates, deterministic."""
         if name == "tap":
             await sandbox.input.tap(500, 1000)
+        elif name == "long_press":
+            await sandbox.input.long_press(500, 1000, duration=1.0)
         elif name == "swipe":
             # swipe up = drag content upward (reveal what's below)
             await sandbox.input.swipe(500, 1500, 500, 500)

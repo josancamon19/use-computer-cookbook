@@ -2,7 +2,13 @@
     "device_type": "iPhone-17-Pro",
     "runtime": "iOS-26-4",
     "tasks": [
-        "What's the closest FedEx to 30 Otis St, and what time do they close on Mondays?",
-        "Create a shopping list and add a reminder to buy whey protein next Monday at 9pm"
+        "what's the walking time from 1177 market st to 30 Otis st",
+        "in maps set my home address to 30 Otis st",
+        "find in maps the closest hike trail of over 7 miles to 30 Otis St",
+        "what's the closest fedex to 30 Otis st and what time do they close mondays",
+        "Go to screentime and disable location services for all apps",
+        "Create a shopping list and add a reminder to buy whey protein next monday 9pm",
+        "I need to go to see Daniel Higgins, can you check his address in contacts, and find how long is it from Santa Ana Fwy, Anaheim to him?",
+        "set my fitness app goal to 300 calories a day, I don't think I've ever used it, I'm 6ft, 170 lb, male."
     ]
 }

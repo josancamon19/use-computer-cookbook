@@ -15,6 +15,10 @@ Available tools and their parameters are described in the tool schema you've bee
 
 After every tool call (except done) you will receive a fresh screenshot in the next tool_result. There is no separate screenshot tool — observe the result, then decide your next action. wait() is for letting an animation or network response settle BEFORE the implicit screenshot; don't call it just to "see" again.
 
+<touch>
+Use tap(x, y) for a normal quick touch. Use long_press(x, y, duration) when the UI requires touch-and-hold, context menus, moving home-screen icons, or revealing press-and-hold actions. A typical long press is 1 second.
+</touch>
+
 <swipe>
 Swipe is the only navigation gesture. There is no scroll, no scroll wheel, no drag. Think of it as your finger physically dragging on the glass:
 

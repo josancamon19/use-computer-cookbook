@@ -1,6 +1,6 @@
 ---
 name: use-computer-sdk
-description: Write Python that drives macOS or iOS sandboxes through the use-computer SDK (use.computer). Use this skill whenever the user is building, scripting, or debugging anything that touches `use_computer.Computer()`, `mac.exec_ssh`, `mac.mouse`, `mac.keyboard`, `mac.screenshot`, `ios.input.tap`/`swipe`/`type_text`, `ios.apps.open_url`, screen recording, file upload/download, or sandbox keepalive — including computer-use agents, evals, demos, and the use-computer-cookbook's Harbor jobs. Also trigger any time the user wants to use a **macOS sandbox or iOS emulator sandbox** for any reason — debugging an iOS app, testing UI on real macOS, exercising a flow on a fresh simulator, exploring an app interactively — they need this SDK to get one. Trigger even when the user just says "rent a Mac mini", "open Safari in a sandbox", "tap the screen on iOS", or "drive a simulator from Python" — they almost certainly want this SDK.
+description: Write Python that drives macOS or iOS sandboxes through the use-computer SDK (use.computer). Use this skill whenever the user is building, scripting, or debugging anything that touches `use_computer.Computer()`, `mac.exec_ssh`, `mac.mouse`, `mac.keyboard`, `mac.screenshot`, `ios.input.tap`/`long_press`/`swipe`/`type_text`, `ios.apps.open_url`, screen recording, file upload/download, or sandbox keepalive — including computer-use agents, evals, demos, and the use-computer-cookbook's Harbor jobs. Also trigger any time the user wants to use a **macOS sandbox or iOS emulator sandbox** for any reason — debugging an iOS app, testing UI on real macOS, exercising a flow on a fresh simulator, exploring an app interactively — they need this SDK to get one. Trigger even when the user just says "rent a Mac mini", "open Safari in a sandbox", "tap the screen on iOS", or "drive a simulator from Python" — they almost certainly want this SDK.
 ---
 
 # use-computer SDK
@@ -62,7 +62,7 @@ png = mac.screenshot.take_full_screen()
 api_bytes, api_w, api_h, sx, sy = scale_screenshot_for_model(png, model_name)
 # send api_bytes to the model (api_w × api_h)
 # when the model returns coordinate=[x, y]:
-mac.mouse.click(int(x * sx), int(y * sy))   # or ios.input.tap(int(x * sx), int(y * sy))
+mac.mouse.click(int(x * sx), int(y * sy))   # or ios.input.tap / long_press(int(x * sx), int(y * sy))
 ```
 
 The helper does an aspect-preserving Pillow resize and returns `sx`, `sy` to multiply model coords back into native space. See `references/cookbook.md` for the rationale and how to extend it for a new model.
