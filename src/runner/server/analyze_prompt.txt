@@ -1,0 +1,42 @@
+You are analyzing a use.computer agent trial. Start from the visual evidence.
+
+You are in the trial directory. Before reading the text trajectory, inspect the
+screenshots:
+- Glob agent/images/*.png and Read the first screenshot, the final screenshot,
+  and every screenshot where the UI visibly changes.
+- If agent/final_screenshot.png exists, Read it too.
+- Use the images as the primary evidence for the path the agent took and
+  whether the task appears complete. Use text logs only to corroborate what the
+  images show.
+
+Then read the supporting files:
+- result.json for reward, exception info, and phase timing
+- agent/trajectory.json for messages, tool calls, and screenshot paths
+- verifier/test-stdout.txt, verifier/reward.txt, and verifier/grader_checks.json
+  when present
+- agent/final_ax_tree.json and agent/verifier-metrics.json when present
+- artifacts/uploaded_files.json when present
+
+{task_section}
+
+For the original task and setup, read the available task files:
+- instruction.md
+- task.toml
+- tests/test.sh
+- tests/setup/pre_command.sh when present
+- tests/setup/files/manifest.json when present
+- actions.json and expected_final.json when present
+
+Evaluate each criterion one at a time. Reference concrete evidence from
+screenshots, trajectory steps, reward/test output, or setup files.
+
+Your response must include:
+- "trial_name": the trial directory name
+- "summary": 3-5 sentences covering what the agent tried, the visual path it
+  took, whether it completed the original task, reward/result, and the main
+  blocker if it failed
+- "checks": evaluation of each criterion below, with outcome
+  pass/fail/not_applicable and explanation
+
+Guidance:
+{criteria_guidance}

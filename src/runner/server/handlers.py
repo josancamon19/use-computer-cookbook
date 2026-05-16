@@ -8,6 +8,7 @@ import time
 from aiohttp import web
 
 from runner.server.agent import agent_spec_for
+from runner.server.analysis import analysis_status_from_disk, ensure_analysis_started
 from runner.server.config import JOBS_DIR
 from runner.server.jobs import (
     JOBS,
@@ -71,6 +72,8 @@ async def handle_run(request: web.Request) -> web.Response:
         job_id=job_id,
         work_dir=work_dir,
         task=None,  # type: ignore[arg-type]
+        env=env,
+        analyze=bool(body.get("analyze")),
     )
     rec.task = asyncio.ensure_future(run_harbor(rec, task_dir, job_yaml, env))
     JOBS[job_id] = rec
@@ -102,6 +105,10 @@ async def handle_get_job(request: web.Request) -> web.Response:
             pass
 
     n_steps, n_actions = read_step_counts(trial_dir)
+    analysis = analysis_status_from_disk(trial_dir) if rec.analyze else None
+    if rec.analyze and rec.task.done() and trial_dir:
+        ensure_analysis_started(rec, trial_dir)
+        analysis = analysis_status_from_disk(trial_dir)
 
     if not rec.task.done():
         return web.json_response({
@@ -111,6 +118,7 @@ async def handle_get_job(request: web.Request) -> web.Response:
             "trial_path": trial_rel_path,
             "n_steps": n_steps,
             "n_actions": n_actions,
+            "analysis": analysis,
         })
 
     if rec.task.cancelled() or (rec.task.exception() is not None):
@@ -123,6 +131,7 @@ async def handle_get_job(request: web.Request) -> web.Response:
             "error": err,
             "n_steps": n_steps,
             "n_actions": n_actions,
+            "analysis": analysis,
         })
 
     # rglob from work_dir picks up result.json whether it's still nested in
@@ -151,6 +160,7 @@ async def handle_get_job(request: web.Request) -> web.Response:
         "returncode": rec.returncode,
         "n_steps": n_steps,
         "n_actions": n_actions,
+        "analysis": analysis,
         # The caller may want to render a few result fields without fetching.
         "stats": (result_json or {}).get("stats"),
         "artifacts": artifacts,

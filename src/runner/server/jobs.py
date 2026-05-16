@@ -14,6 +14,9 @@ class JobRec:
     job_id: str
     work_dir: Path
     task: asyncio.Task
+    env: dict[str, str] = field(default_factory=dict)
+    analyze: bool = False
+    analysis_task: asyncio.Task | None = None
     created_at: float = field(default_factory=time.time)
     returncode: int | None = None
     error: str | None = None
